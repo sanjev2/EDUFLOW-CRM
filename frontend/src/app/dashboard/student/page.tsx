@@ -1,2 +1,2 @@
-import { DashboardPlaceholder } from "@/components/dashboard-placeholder";
-export default function StudentDashboard() { return <DashboardPlaceholder role="Student" />; }
+import { StudentDashboard } from "@/components/crm/student-dashboard";
+export default function StudentDashboardPage() { return <StudentDashboard />; }

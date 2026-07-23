@@ -1,2 +1,2 @@
-import { DashboardPlaceholder } from "@/components/dashboard-placeholder";
-export default function CounsellorDashboard() { return <DashboardPlaceholder role="Counsellor" />; }
+import { CounsellorDashboard } from "@/components/crm/counsellor-dashboard";
+export default function CounsellorDashboardPage() { return <CounsellorDashboard />; }

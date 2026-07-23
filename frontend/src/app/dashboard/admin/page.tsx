@@ -1,2 +1,2 @@
-import { DashboardPlaceholder } from "@/components/dashboard-placeholder";
-export default function AdminDashboard() { return <DashboardPlaceholder role="Administrator" />; }
+import { AdminDashboard } from "@/components/crm/admin-dashboard";
+export default function AdminDashboardPage() { return <AdminDashboard />; }
