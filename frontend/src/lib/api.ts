@@ -13,7 +13,8 @@ export async function refreshCsrf() {
 }
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const method = options.method?.toUpperCase() ?? "GET";
-  const response = await fetch(`${apiUrl}${path}`, {
+  const normalizedPath = apiUrl.endsWith("/api/v1") && path.startsWith("/api/v1") ? path.slice("/api/v1".length) : path;
+  const response = await fetch(`${apiUrl}${normalizedPath}`, {
     ...options,
     credentials: "include",
     headers: {

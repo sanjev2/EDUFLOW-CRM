@@ -12,13 +12,13 @@ This stage includes secure authentication, TOTP MFA, revocable server-side sessi
 
 ## Setup
 
-1. Copy `.env.example` to `.env` and replace all placeholder secrets locally.
+1. Run `npm run env:setup` to create `.env` with generated local secrets. Existing files are preserved.
 2. Run `npm install`.
 3. Start MongoDB.
 4. Run `npm run dev`.
 
-Frontend: `http://localhost:3000`  
-API: `http://localhost:4000/api/health`
+Frontend: `http://localhost:3100`
+API: `http://localhost:5001/api/health`
 
 ## Commands
 

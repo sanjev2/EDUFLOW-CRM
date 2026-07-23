@@ -4,7 +4,8 @@
   "private": true,
   "workspaces": ["frontend", "backend"],
   "scripts": {
-    "dev": "npm run dev --workspaces --if-present",
+    "dev": "dotenv -e .env -- concurrently --kill-others-on-fail --names frontend,backend --prefix-colors cyan,green \"npm run dev --workspace=@eduflow/frontend\" \"npm run dev --workspace=@eduflow/backend\"",
+    "env:setup": "node scripts/setup-local-env.mjs",
     "typecheck": "npm run typecheck --workspaces",
     "lint": "npm run lint --workspaces",
     "test": "npm run test --workspaces",
@@ -13,6 +14,8 @@
     "format:check": "prettier --check ."
   },
   "devDependencies": {
+    "concurrently": "^9.2.1",
+    "dotenv-cli": "^10.0.0",
     "prettier": "^3.6.2"
   },
   "engines": {

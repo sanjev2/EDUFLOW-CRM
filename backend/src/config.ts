@@ -3,8 +3,8 @@ import { z } from "zod";
 
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  BACKEND_PORT: z.coerce.number().int().positive().default(4000),
-  FRONTEND_URL: z.string().url().default("http://localhost:3000"),
+  BACKEND_PORT: z.coerce.number().int().positive().default(5001),
+  FRONTEND_URL: z.string().url().default("http://localhost:3100"),
   MONGODB_URI: z.string().min(1).default("mongodb://127.0.0.1:27017/eduflow_crm"),
   SESSION_SECRET: z.string().min(32).default("development-session-secret-change-me-now"),
   FIELD_ENCRYPTION_KEY: z.string().min(32).default("development-field-key-change-me-now"),
