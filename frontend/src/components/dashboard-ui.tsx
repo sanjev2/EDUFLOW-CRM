@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 export function MetricCard({ label, value, hint, icon }: { label: string; value: ReactNode; hint?: string; icon?: ReactNode }) {
-  return <section className="app-card min-w-0 p-5"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-medium text-[var(--muted)]">{label}</p><p className="mt-2 text-3xl font-bold text-[var(--text)]">{value}</p>{hint && <p className="mt-1 text-xs text-[var(--muted)]">{hint}</p>}</div>{icon && <span className="rounded-xl bg-blue-50 p-3 text-[var(--navy)]">{icon}</span>}</div></section>;
+  return <section className="app-card group min-w-0 overflow-hidden p-5 transition hover:-translate-y-0.5 hover:shadow-[0_12px_30px_rgb(4_56_115_/_0.09)]"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-[.07em] text-[var(--muted)]">{label}</p><p className="mt-2 text-3xl font-extrabold tracking-tight text-[var(--text)]">{value}</p>{hint && <p className="mt-1 text-xs text-[var(--muted)]">{hint}</p>}</div>{icon && <span className="rounded-xl bg-[var(--light-blue)]/55 p-3 text-[var(--navy)] transition group-hover:bg-[var(--light-blue)]">{icon}</span>}</div><div className="mt-4 h-1 w-12 rounded-full bg-[var(--primary)]" /></section>;
 }
 export function Panel({ title, action, children, className = "" }: { title: string; action?: ReactNode; children: ReactNode; className?: string }) {
-  return <section className={`app-card min-w-0 p-5 ${className}`}><div className="mb-4 flex items-center justify-between gap-3"><h2 className="text-lg font-bold">{title}</h2>{action}</div>{children}</section>;
+  return <section className={`app-card min-w-0 overflow-hidden p-5 sm:p-6 ${className}`}><div className="mb-5 flex items-center justify-between gap-3 border-b border-[var(--border)] pb-4"><h2 className="text-lg font-extrabold tracking-tight text-[var(--text)]">{title}</h2>{action}</div>{children}</section>;
 }
 export function Badge({ children, tone = "info" }: { children: ReactNode; tone?: "info" | "success" | "warning" | "danger" }) {
   return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold status-${tone}`}>{children}</span>;
