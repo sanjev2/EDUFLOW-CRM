@@ -5,7 +5,9 @@ import Home from "./page";
 describe("landing page", () => {
   it("renders its main heading and registration link", () => {
     render(<Home />);
-    expect(screen.getByRole("heading", { name: /clearer path/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /get started/i })).toHaveAttribute("href", "/register");
+    expect(screen.getByRole("heading", { name: /guide every student/i })).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: /get started/i })).toEqual(
+      expect.arrayContaining([expect.objectContaining({ href: expect.stringContaining("/register") })]),
+    );
   });
 });
