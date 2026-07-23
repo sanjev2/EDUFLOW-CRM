@@ -8,12 +8,12 @@ import { config } from "./config.js";
 import { databaseHealth } from "./database.js";
 import { ApiError, errorHandler, notFound } from "./errors.js";
 import { logger } from "./logger.js";
-
-declare global {
-  namespace Express {
-    interface Request { id: string; }
-  }
-}
+import { loadAuthentication, csrfProtection, enforceAdminMfaEnrollment } from "./middleware/auth.js";
+import { authRouter } from "./routes/auth.js";
+import { mfaRouter } from "./routes/mfa.js";
+import { sessionRouter } from "./routes/sessions.js";
+import { adminRouter } from "./routes/admin.js";
+import { accessRouter } from "./routes/access.js";
 
 export const app = express();
 app.disable("x-powered-by");
@@ -28,12 +28,20 @@ app.use((req, res, next) => {
   next();
 });
 app.use(pinoHttp({ logger, customProps: (req) => ({ requestId: req.id }) }));
+app.use(loadAuthentication);
+app.use(enforceAdminMfaEnrollment);
+app.use(csrfProtection);
 
 app.get("/api/health", (_req, res) => res.json({ status: "ok", service: "eduflow-api" }));
 app.get("/api/v1/health/database", (_req, res) => {
   const health = databaseHealth();
   res.status(health.status === "ok" ? 200 : 503).json(health);
 });
+app.use("/api/v1/auth", authRouter);
+app.use("/api/v1/mfa", mfaRouter);
+app.use("/api/v1/sessions", sessionRouter);
+app.use("/api/v1/admin", adminRouter);
+app.use("/api/v1/access", accessRouter);
 if (config.NODE_ENV === "test") app.get("/api/v1/test/error", () => { throw new ApiError(418, "TEST_ERROR", "Test error"); });
 app.use(notFound);
 app.use(errorHandler);
