@@ -52,6 +52,7 @@ export default function Home() {
           <h1 className="mt-6 max-w-2xl text-4xl font-extrabold leading-[1.08] tracking-[-.04em] text-white sm:text-5xl lg:text-6xl">Guide every student from first enquiry to enrolment.</h1>
           <p className="mt-6 max-w-xl text-lg leading-8 text-blue-100">EduFlow brings student records, counselling work, application progress and team accountability into one secure, focused workspace.</p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row"><Link className="landing-primary-button" href="/register">Get started <ArrowRight aria-hidden size={18} /></Link><Link className="landing-secondary-button" href="/login">Sign in</Link></div>
+          <p className="mt-4 text-sm text-blue-100">Student registration is public. Consultancy staff accounts are provided by an authorized administrator.</p>
           <div className="mt-8 flex flex-wrap gap-x-6 gap-y-3 text-sm text-blue-100"><span className="flex items-center gap-2"><Check size={16} />Role-based access</span><span className="flex items-center gap-2"><Check size={16} />Clear application history</span><span className="flex items-center gap-2"><Check size={16} />Built-in accountability</span></div>
         </div>
         <ProductPreview />

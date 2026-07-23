@@ -24,6 +24,17 @@ const navigation = {
 
 export function AppShell({ role, title, subtitle, actions, children }: { role: AppRole; title: string; subtitle?: string; actions?: ReactNode; children: ReactNode }) {
   const pathname = usePathname(); const router = useRouter(); const [drawer, setDrawer] = useState(false); const [compact, setCompact] = useState(false); const menuButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    void api<{ user: { role: AppRole; status: string; mfaEnabled: boolean }; passwordExpired: boolean; mfaComplete: boolean }>("/api/v1/auth/me")
+      .then((result) => {
+        if (result.user.status !== "ACTIVE") return router.replace("/login");
+        if (result.passwordExpired) return router.replace("/password-expired");
+        if (result.user.role !== role) return router.replace("/access-denied");
+        if (role === "ADMIN" && !result.user.mfaEnabled) return router.replace("/mfa-enrolment");
+        if (role === "ADMIN" && !result.mfaComplete) return router.replace("/login");
+      })
+      .catch(() => router.replace("/login"));
+  }, [role, router]);
   useEffect(() => { if (!drawer) return; const close = (event: KeyboardEvent) => { if (event.key === "Escape") { setDrawer(false); menuButton.current?.focus(); } }; document.addEventListener("keydown", close); return () => document.removeEventListener("keydown", close); }, [drawer]);
   async function logout() { await refreshCsrf(); await api("/api/v1/auth/logout", { method: "POST", body: "{}" }); router.replace("/login"); }
   const sidebar = <><div className="flex h-16 items-center justify-between border-b border-white/15 px-5"><Link href="/" className="flex items-center gap-2 font-bold"><GraduationCap aria-hidden />{!compact && "EduFlow"}</Link><button aria-label="Close navigation" className="rounded-lg p-2 md:hidden" onClick={() => setDrawer(false)}><X /></button></div><nav aria-label={`${role.toLowerCase()} navigation`} className="flex-1 space-y-1 p-3">{navigation[role].map(([label, href, Icon]) => <Link key={href} href={href} title={label} onClick={() => setDrawer(false)} className={`flex min-h-11 items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium ${pathname === href ? "bg-white text-[#043873]" : "text-blue-50 hover:bg-white/10"}`}><Icon aria-hidden size={19} />{!compact && <span>{label}</span>}</Link>)}</nav><button onClick={() => void logout()} className="m-3 flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium text-blue-50 hover:bg-white/10"><LogOut aria-hidden size={19} />{!compact && "Logout"}</button></>;

@@ -4,16 +4,23 @@ import { AppShell } from "../app-shell";
 import { StudentProfileForm } from "./student-profile-form";
 import { StudentApplication } from "./student-application";
 
+const navigation = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
 vi.mock("next/navigation", () => ({
   usePathname: () => "/dashboard/student",
-  useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
+  useRouter: () => navigation,
 }));
 
 function response(body: unknown) {
   return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) } as Response);
 }
 
-beforeEach(() => { vi.stubGlobal("fetch", vi.fn(() => response({}))); });
+beforeEach(() => {
+  navigation.replace.mockReset();
+  vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) =>
+    response(String(input).includes("/auth/me")
+      ? { user: { role: "STUDENT", status: "ACTIVE", mfaEnabled: false }, passwordExpired: false, mfaComplete: true }
+      : {})));
+});
 
 describe("EduFlow CRM interface", () => {
   it("renders role-specific student navigation", () => {
@@ -25,6 +32,24 @@ describe("EduFlow CRM interface", () => {
     render(<AppShell role="ADMIN" title="Administrator dashboard"><p>Content</p></AppShell>);
     expect(screen.getAllByRole("link", { name: "Assignments" }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole("link", { name: "Security Alerts" }).length).toBeGreaterThan(0);
+  });
+  it("redirects unauthenticated and wrong-role dashboard entry", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) =>
+      String(input).includes("/auth/me")
+        ? Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({ error: { code: "AUTHENTICATION_REQUIRED" } }) } as Response)
+        : response({})));
+    const first = render(<AppShell role="STUDENT" title="Student dashboard"><p>Content</p></AppShell>);
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/login"));
+    first.unmount();
+    navigation.replace.mockReset();
+    vi.stubGlobal("fetch", vi.fn(() => response({ user: { role: "STUDENT", status: "ACTIVE", mfaEnabled: false }, passwordExpired: false, mfaComplete: true })));
+    render(<AppShell role="ADMIN" title="Administrator dashboard"><p>Content</p></AppShell>);
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/access-denied"));
+  });
+  it("redirects an administrator to mandatory MFA enrolment", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => response({ user: { role: "ADMIN", status: "ACTIVE", mfaEnabled: false }, passwordExpired: false, mfaComplete: false })));
+    render(<AppShell role="ADMIN" title="Administrator dashboard"><p>Content</p></AppShell>);
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/mfa-enrolment"));
   });
   it("opens and closes the accessible mobile drawer", () => {
     render(<AppShell role="COUNSELLOR" title="Counsellor dashboard"><p>Content</p></AppShell>);
