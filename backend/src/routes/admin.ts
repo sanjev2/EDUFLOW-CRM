@@ -11,6 +11,8 @@ import { deliverDevelopmentLink } from "../security/outbox.js";
 import { audit } from "../security/audit.js";
 import { ApiError } from "../errors.js";
 import { Session } from "../models/Session.js";
+import { AuditLog } from "../models/AuditLog.js";
+import { SecurityAlert } from "../models/Security.js";
 
 export const adminRouter = Router();
 adminRouter.use(requireAuthentication, requireVerifiedEmail, requireCurrentPassword, requireMfa, requireFreshAuthentication, requireRole("ADMIN"));
@@ -67,4 +69,24 @@ adminRouter.patch("/users/:id/role", async (req, res) => {
   await Session.updateMany({ userId: user._id, revokedAt: { $exists: false } }, { revokedAt: new Date() });
   await audit(req, "ROLE_CHANGE", { actorId: req.auth!.user._id, subjectId: user._id, metadata: { before, after: input.role, reason: input.reason } });
   res.json({ user: { id: String(user._id), role: user.role } });
+});
+
+adminRouter.get("/audit-logs", async (req, res) => {
+  const input = z.object({ page: z.coerce.number().int().min(1).default(1), limit: z.coerce.number().int().min(1).max(50).default(20), event: z.string().max(100).optional() }).parse(req.query);
+  const filter = input.event ? { event: input.event } : {};
+  const [logs, total] = await Promise.all([
+    AuditLog.find(filter).select("event actorId subjectId requestId metadata createdAt").sort({ createdAt: -1 }).skip((input.page - 1) * input.limit).limit(input.limit),
+    AuditLog.countDocuments(filter),
+  ]);
+  res.json({ logs, page: input.page, limit: input.limit, total });
+});
+
+adminRouter.get("/security-alerts", async (req, res) => {
+  const input = z.object({ page: z.coerce.number().int().min(1).default(1), limit: z.coerce.number().int().min(1).max(50).default(20), severity: z.enum(["LOW", "MEDIUM", "HIGH"]).optional() }).parse(req.query);
+  const filter = input.severity ? { severity: input.severity } : {};
+  const [alerts, total] = await Promise.all([
+    SecurityAlert.find(filter).select("type severity metadata acknowledgedAt createdAt").sort({ createdAt: -1 }).skip((input.page - 1) * input.limit).limit(input.limit),
+    SecurityAlert.countDocuments(filter),
+  ]);
+  res.json({ alerts, page: input.page, limit: input.limit, total });
 });
