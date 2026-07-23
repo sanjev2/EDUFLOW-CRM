@@ -9,7 +9,7 @@ import { ErrorSummary, PasswordField, PasswordStrength, SubmitButton } from "./f
 type Session = { id: string; createdAt: string; lastActivityAt: string; expiresAt: string; userAgent: string; ipAddress: string; current: boolean };
 export function SecurityCenter() {
   const router = useRouter();
-  const [role, setRole] = useState<AppRole>("STUDENT");
+  const [role, setRole] = useState<AppRole>();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -32,5 +32,6 @@ export function SecurityCenter() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Password could not be changed."); }
     finally { setBusy(false); }
   }
+  if (!role) return <main className="grid min-h-screen place-items-center bg-[var(--app-background)] p-5"><p role={error ? "alert" : "status"} className="rounded-xl bg-white p-5 shadow-sm">{error || "Loading your secure workspace…"}</p></main>;
   return <AppShell role={role} title="Security settings" subtitle="Manage your password, MFA and active sessions." actions={<button onClick={() => void logout()} className="rounded-lg border border-slate-300 bg-white px-4 py-2 font-semibold">Log out</button>}><div className="mx-auto grid max-w-4xl gap-6"><ErrorSummary message={error} />{message && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-emerald-900">{message}</p>}<Card><div className="flex flex-wrap items-center justify-between gap-4"><div><h2 className="text-xl font-bold">Multi-factor authentication</h2><p className="mt-1 text-sm text-slate-600">Protect sign-in with an authenticator and recovery codes.</p></div><button onClick={() => router.push("/mfa-enrolment")} className="rounded-lg bg-blue-700 px-4 py-2 font-semibold text-white">Set up MFA</button></div></Card><Card><h2 className="text-xl font-bold">Change password</h2><form onSubmit={changePassword} className="mt-5 grid gap-4"><PasswordField label="Current password" name="currentPassword" autoComplete="current-password" required /><PasswordField label="New password" name="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" maxLength={128} required /><PasswordStrength password={password} /><PasswordField label="Confirm new password" name="passwordConfirmation" autoComplete="new-password" maxLength={128} required /><SubmitButton busy={busy}>Change password</SubmitButton></form></Card><Card><h2 className="text-xl font-bold">Active sessions</h2><div className="mt-4 grid gap-3">{sessions.map((session) => <div key={session.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><div><p className="font-semibold">{session.current ? "This device" : session.userAgent}</p><p className="text-xs text-slate-500">Last active {new Date(session.lastActivityAt).toLocaleString()} · IP {session.ipAddress}</p></div>{!session.current && <button onClick={() => void revoke(session.id)} className="text-sm font-semibold text-red-700">Revoke</button>}</div>)}</div></Card></div></AppShell>;
 }

@@ -221,6 +221,20 @@ describe("deny-by-default roles", () => {
     expect(signedIn.body.mfaEnrollmentRequired).toBe(true);
     await request(app).get("/api/v1/access/admin").set("Cookie", cookie(signedIn)).expect(403);
   });
+  it("rotates an ADMIN enrolment session and preserves dashboard access across identity refresh", async () => {
+    await directUser("ADMIN");
+    const signedIn = await login("admin@example.test").expect(200);
+    const preMfaCookie = cookie(signedIn);
+    const started = await request(app).post("/api/v1/mfa/enrol/start").set("Cookie", preMfaCookie).set("x-csrf-token", signedIn.body.csrfToken).send({}).expect(200);
+    const confirmed = await request(app).post("/api/v1/mfa/enrol/confirm").set("Cookie", preMfaCookie).set("x-csrf-token", signedIn.body.csrfToken).send({ code: await generate({ secret: started.body.manualKey }) }).expect(200);
+    const postMfaCookie = cookie(confirmed);
+    await request(app).get("/api/v1/auth/me").set("Cookie", preMfaCookie).expect(401);
+    const refreshed = await request(app).get("/api/v1/auth/me").set("Cookie", postMfaCookie).expect(200);
+    expect(refreshed.body).toMatchObject({ user: { role: "ADMIN", mfaEnabled: true }, mfaComplete: true });
+    await request(app).get("/api/v1/crm/dashboard/admin").set("Cookie", postMfaCookie).expect(200);
+    await request(app).get("/api/v1/auth/me").set("Cookie", postMfaCookie).expect(200);
+    await request(app).get("/api/v1/crm/dashboard/admin").set("Cookie", postMfaCookie).expect(200);
+  });
   it("allows an ADMIN only after completed MFA", async () => {
     const secret = generateSecret();
     const admin = await directUser("ADMIN", true);

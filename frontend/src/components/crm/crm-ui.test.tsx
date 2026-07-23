@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "../app-shell";
 import { StudentProfileForm } from "./student-profile-form";
 import { StudentApplication } from "./student-application";
+import { SecurityCenter } from "../auth/security-center";
 
 const navigation = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
 vi.mock("next/navigation", () => ({
@@ -50,6 +51,19 @@ describe("EduFlow CRM interface", () => {
     vi.stubGlobal("fetch", vi.fn(() => response({ user: { role: "ADMIN", status: "ACTIVE", mfaEnabled: false }, passwordExpired: false, mfaComplete: false })));
     render(<AppShell role="ADMIN" title="Administrator dashboard"><p>Content</p></AppShell>);
     await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/mfa-enrolment"));
+  });
+  it("waits for the authoritative ADMIN role before guarding shared security settings", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/auth/csrf")) return response({ csrfToken: "test-csrf" });
+      if (url.includes("/sessions")) return response({ sessions: [] });
+      return response({ user: { role: "ADMIN", status: "ACTIVE", mfaEnabled: true }, passwordExpired: false, mfaComplete: true });
+    }));
+    render(<SecurityCenter />);
+    expect(screen.getByRole("status")).toHaveTextContent("Loading your secure workspace");
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Security settings" })).toBeInTheDocument());
+    expect(navigation.replace).not.toHaveBeenCalledWith("/access-denied");
+    expect(screen.getAllByRole("link", { name: "Audit Logs" }).length).toBeGreaterThan(0);
   });
   it("opens and closes the accessible mobile drawer", () => {
     render(<AppShell role="COUNSELLOR" title="Counsellor dashboard"><p>Content</p></AppShell>);
