@@ -8,12 +8,12 @@ The initial administrator is created once with:
 
 ```powershell
 $env:ADMIN_NAME="Initial Administrator"
-$env:ADMIN_EMAIL="admin@example.test"
-$env:ADMIN_PASSWORD="<a locally generated policy-compliant password>"
+$env:ADMIN_EMAIL="<initial administrator email>"
+$env:ADMIN_SETUP_OUTPUT_FILE="<an ignored, access-controlled runtime file>"
 npm.cmd run bootstrap:admin --workspace=@eduflow/backend
 ```
 
-Credentials are process environment values and must not be written to source or committed. The script refuses to run if any administrator already exists or the email is taken. The administrator is email-verified but confined to MFA enrolment, logout, current-session and CSRF endpoints until TOTP setup succeeds.
+The script never accepts or prints a default password. For a new account it creates an unrecoverable random credential, stores only hashes of single-use verification and password-setup tokens, and writes the one-time links to the explicitly configured ignored runtime file. For an existing active account, email verification is required before promotion and all sessions are revoked. The bootstrap is idempotent for the same administrator and refuses to overwrite a different administrator. Every creation or promotion is audited. After verification and password setup, an administrator remains confined to MFA enrolment, logout, current-session and CSRF endpoints until TOTP setup succeeds.
 
 ## Passwords
 
