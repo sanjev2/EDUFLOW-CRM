@@ -17,6 +17,14 @@ The browser is untrusted. The API validates every request and mediates access to
 - Malicious uploads and resource exhaustion
 - Excessive privilege and unsafe administrative actions
 
-## Planned controls
+## Implemented authentication controls
 
-Zod validation, deny-by-default authorisation, secure server-side sessions, CSRF protection, rate limiting, audit events, output minimisation, private upload handling and security-focused tests. Authentication and authorisation controls are planned, not yet implemented.
+Strict Zod input schemas, Argon2id password hashing, generic identity responses, hashed expiring tokens, combined account/IP controls, lockout, CAPTCHA, encrypted TOTP, hashed recovery codes, opaque sessions, session-bound CSRF, deny-by-default role middleware, structured audit events and session revocation.
+
+## Residual risks
+
+- The in-process throttle decision uses MongoDB attempt records and has not yet been validated under distributed deployment.
+- Development outbox links are intentionally available only outside production and require a trusted local environment.
+- Unresolved Next dependency findings affect build-time CSS and unused image-optimization paths; compatible upstream remediation is monitored.
+- Formal penetration testing remains deferred until feature completion.
+- Private upload controls remain planned because documents are outside this stage.

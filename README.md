@@ -2,7 +2,7 @@
 
 EduFlow is a responsive, security-led web application foundation for one education consultancy. It will support student enquiries and applications for three roles: student, counsellor and administrator.
 
-This foundation intentionally excludes authentication, MFA and CRM business workflows.
+This stage includes secure authentication, TOTP MFA, revocable server-side sessions, CSRF protection and deny-by-default role controls. CRM business workflows remain intentionally excluded.
 
 ## Requirements
 
@@ -28,3 +28,7 @@ API: `http://localhost:4000/api/health`
 - `npm run build`
 
 See `docs/` for scope, security decisions, threat modelling and coursework traceability.
+
+## Initial administrator
+
+See [`docs/AUTHENTICATION_DESIGN.md`](docs/AUTHENTICATION_DESIGN.md) for the controlled environment-variable bootstrap procedure. Never store bootstrap credentials in a file or commit them.
