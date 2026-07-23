@@ -1,0 +1,2 @@
+import Link from "next/link";
+export default function AccessDeniedPage() { return <main className="grid min-h-screen place-items-center p-5"><div className="max-w-md text-center"><p className="font-semibold text-red-700">Access denied</p><h1 className="mt-2 text-4xl font-bold">You don’t have permission</h1><p className="mt-4 text-slate-600">EduFlow enforces permissions on the server. Return to your assigned workspace.</p><Link href="/login" className="mt-6 inline-block font-semibold text-blue-700">Return to sign in</Link></div></main>; }

@@ -1,2 +1,2 @@
-import { AuthPlaceholder } from "@/components/auth-placeholder";
-export default function LoginPage() { return <AuthPlaceholder mode="login" />; }
+import { LoginForm } from "@/components/auth/login-form";
+export default function LoginPage() { return <LoginForm />; }
