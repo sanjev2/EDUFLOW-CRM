@@ -28,3 +28,12 @@ Strict Zod input schemas, Argon2id password hashing, generic identity responses,
 - Unresolved Next dependency findings affect build-time CSS and unused image-optimization paths; compatible upstream remediation is monitored.
 - Formal penetration testing remains deferred until feature completion.
 - Private upload controls remain planned because documents are outside this stage.
+
+## CRM threats and controls
+
+- **Cross-student/cross-counsellor IDOR:** user IDs are derived for student self-service and active assignment checks gate staff resources.
+- **Mass assignment:** every mutation uses strict Zod objects; role, owner, official stage and assignment fields are absent from public schemas.
+- **Workflow bypass:** stage changes use an explicit forward transition map; administrator corrections are isolated and reasoned.
+- **Duplicate workflow creation:** partial unique indexes protect active applications/assignments and an idempotency key protects automatic tasks.
+- **Internal information leakage:** students have no notes/tasks route permission; summaries expose aggregates and safe fields only.
+- **Stored script content:** notes remain plain strings and are never rendered through raw HTML.

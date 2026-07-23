@@ -4,7 +4,7 @@ EduFlow is a browser-based application for one education consultancy. It has thr
 
 ## Current stage
 
-This stage establishes the frontend, API, local MongoDB integration, tests and security-oriented documentation. Authentication, MFA, authorisation enforcement and CRM workflows remain unimplemented.
+The foundation and authentication stages are complete. The current CRM stage adds student profiles, enquiries/applications, counsellor assignments, internal notes, follow-up tasks and role-specific dashboards while preserving the backend security boundary.
 
 ## Exclusions
 
@@ -13,3 +13,4 @@ This stage establishes the frontend, API, local MongoDB integration, tests and s
 - AI, WhatsApp and university APIs
 - Deployment
 - Formal penetration testing before feature completion
+- Secure document uploads, which remain a separate next-stage workflow

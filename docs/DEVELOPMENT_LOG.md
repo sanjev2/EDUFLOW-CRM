@@ -21,3 +21,14 @@
 - Replaced authentication placeholders with responsive registration, verification, login, CAPTCHA, MFA, recovery, reset, expiry, security/session and access-denied interfaces.
 - Added MongoDB-isolated security integration tests using only `eduflow_crm_test`.
 - CRM profiles, applications, documents, tasks, automation and formal penetration testing remain deferred.
+
+## Core CRM stage
+
+- Added separate student profile, application, stage-history, assignment, note and task models.
+- Added server-calculated profile completion and strict self/assigned/admin ownership rules.
+- Added a seven-stage application state machine, early student cancellation and reasoned administrator correction.
+- Added deterministic least-workload automatic assignment with unique active-assignment protection and a no-counsellor operational alert.
+- Added idempotent 24-hour enquiry follow-up tasks, internal plain-text notes and role-safe task workflows.
+- Added role-specific dashboard summaries and original responsive EduFlow application shell.
+- Added student, counsellor and administrator CRM pages using the locked colour/token system.
+- Added CRM integration and interface tests. Secure documents, final landing redesign and formal penetration testing remain deferred.
