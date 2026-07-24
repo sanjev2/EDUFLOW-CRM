@@ -4,7 +4,8 @@
   "private": true,
   "workspaces": ["frontend", "backend"],
   "scripts": {
-    "dev": "dotenv -e .env -- concurrently --kill-others-on-fail --names frontend,backend --prefix-colors cyan,green \"npm run dev --workspace=@eduflow/frontend\" \"npm run dev --workspace=@eduflow/backend\"",
+    "dev": "dotenv -e .env -- node scripts/dev-ports.mjs && dotenv -e .env -- concurrently --kill-others-on-fail --names frontend,backend --prefix-colors cyan,green \"npm run dev --workspace=@eduflow/frontend\" \"npm run dev --workspace=@eduflow/backend\"",
+    "dev:status": "dotenv -e .env -- node scripts/dev-ports.mjs --status",
     "env:setup": "node scripts/setup-local-env.mjs",
     "typecheck": "npm run typecheck --workspaces",
     "lint": "npm run lint --workspaces",
