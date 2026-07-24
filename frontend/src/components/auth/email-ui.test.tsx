@@ -4,6 +4,7 @@ import { ResendVerificationForm } from "./resend-verification-form";
 import { LoginForm } from "./login-form";
 import { ForgotPasswordForm, ResetPasswordForm } from "./forgot-reset-forms";
 import { VerifyEmailResult } from "./verify-email-result";
+import { AcceptCounsellorInvitation } from "./accept-counsellor-invitation";
 
 const navigation = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), params: new Map<string, string>() }));
 vi.mock("next/navigation", () => ({
@@ -130,5 +131,35 @@ describe("verification and recovery email interfaces", () => {
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(navigation.push).not.toHaveBeenCalled();
     expect(navigation.replace).not.toHaveBeenCalled();
+  });
+
+  it("verifies a counsellor invitation and securely completes password setup", async () => {
+    navigation.params.set("verification", "single-use-verification-token");
+    navigation.params.set("setup", "single-use-password-setup-token");
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/verify-email")) return response({ message: "Email verified successfully." });
+      if (url.includes("/reset-password")) return response({ message: "Password reset successfully." });
+      return response({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AcceptCounsellorInvitation />);
+    expect(await screen.findByText(/Email verified\. Set your password/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("New password"), { target: { value: "Counsellor-Setup9!" } });
+    fireEvent.change(screen.getByLabelText("Confirm new password"), { target: { value: "Counsellor-Setup9!" } });
+    fireEvent.click(screen.getByRole("button", { name: "Set password and continue" }));
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/login?success=password-reset"));
+    expect(window.location.search).toBe("");
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+  });
+
+  it("routes an authenticated counsellor to the counsellor dashboard", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => response({ user: { role: "COUNSELLOR" }, csrfToken: "test-csrf" })));
+    render(<LoginForm />);
+    fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "counsellor@example.test" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "Counsellor-Setup9!" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await waitFor(() => expect(navigation.push).toHaveBeenCalledWith("/dashboard/counsellor"));
   });
 });

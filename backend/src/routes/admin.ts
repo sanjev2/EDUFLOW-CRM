@@ -2,17 +2,17 @@ import { Router } from "express";
 import { z } from "zod";
 import { User } from "../models/User.js";
 import { requireAuthentication, requireCurrentPassword, requireFreshAuthentication, requireMfa, requireRole, requireVerifiedEmail } from "../middleware/auth.js";
-import { email, strictBody, strongPassword } from "../security/validation.js";
-import { hashPassword, recordPassword } from "../security/password.js";
+import { email, strictBody } from "../security/validation.js";
+import { hashPassword } from "../security/password.js";
 import { config } from "../config.js";
-import { EmailVerificationToken } from "../models/Tokens.js";
-import { randomToken, sha256 } from "../security/crypto.js";
-import { sendEmailVerification } from "../email/delivery.js";
+import { EmailVerificationToken, PasswordResetToken } from "../models/Tokens.js";
+import { keyedHash, randomToken, sha256 } from "../security/crypto.js";
+import { sendCounsellorInvitation } from "../email/delivery.js";
 import { audit } from "../security/audit.js";
 import { ApiError } from "../errors.js";
 import { Session } from "../models/Session.js";
 import { AuditLog } from "../models/AuditLog.js";
-import { IpAccessRule, SecurityAlert } from "../models/Security.js";
+import { IpAccessRule, LoginAttempt, SecurityAlert } from "../models/Security.js";
 import { validIpCidr } from "../security/ip-access.js";
 
 export const adminRouter = Router();
@@ -27,10 +27,52 @@ adminRouter.get("/users", async (req, res) => {
   res.json({ users, page: input.page, limit: input.limit, total });
 });
 
+async function invitationRateLimit(req: import("express").Request, emailAddress: string, outcome: string, limit: number, minutes: number) {
+  const emailHash = keyedHash(emailAddress);
+  const ipHash = keyedHash(req.ip ?? "");
+  const since = new Date(Date.now() - minutes * 60_000);
+  const attempts = await LoginAttempt.countDocuments({ $or: [{ emailHash }, { ipHash }], outcome, createdAt: { $gte: since } });
+  if (attempts >= limit) throw new ApiError(429, "COUNSELLOR_INVITATION_RATE_LIMITED", "Too many invitation requests. Please try again later");
+  await LoginAttempt.create({ emailHash, ipHash, outcome });
+}
+
+async function issueCounsellorInvitation(req: import("express").Request, user: InstanceType<typeof User>) {
+  await Promise.all([
+    EmailVerificationToken.updateMany({ userId: user._id, usedAt: { $exists: false } }, { usedAt: new Date() }),
+    PasswordResetToken.updateMany({ userId: user._id, usedAt: { $exists: false } }, { usedAt: new Date() }),
+  ]);
+  const verificationToken = randomToken();
+  const setupToken = randomToken();
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60_000);
+  const [verification, setup] = await Promise.all([
+    EmailVerificationToken.create({ userId: user._id, tokenHash: sha256(verificationToken), expiresAt }),
+    PasswordResetToken.create({ userId: user._id, tokenHash: sha256(setupToken), expiresAt }),
+  ]);
+  try {
+    await sendCounsellorInvitation({ email: user.email, fullName: user.fullName, verificationToken, setupToken });
+    await audit(req, "COUNSELLOR_INVITATION_SENT", { actorId: req.auth!.user._id, subjectId: user._id });
+    return true;
+  } catch {
+    const now = new Date();
+    await Promise.all([
+      EmailVerificationToken.updateOne({ _id: verification._id }, { usedAt: now }),
+      PasswordResetToken.updateOne({ _id: setup._id }, { usedAt: now }),
+      SecurityAlert.create({ userId: user._id, type: "EMAIL_DELIVERY_FAILURE", severity: "MEDIUM", metadata: { purpose: "counsellor-invitation" } }),
+      audit(req, "EMAIL_DELIVERY_FAILURE", { actorId: req.auth!.user._id, subjectId: user._id, metadata: { purpose: "counsellor-invitation" } }),
+      audit(req, "COUNSELLOR_INVITATION_FAILED", { actorId: req.auth!.user._id, subjectId: user._id }),
+    ]);
+    return false;
+  }
+}
+
 adminRouter.post("/users/counsellors", async (req, res) => {
-  const input = strictBody(z.object({ fullName: z.string().trim().min(2).max(100), email, temporaryPassword: strongPassword, reason: z.string().trim().min(10).max(500) }).strict(), req.body);
+  const input = strictBody(z.object({
+    fullName: z.string().trim().min(2).max(100).regex(/^[\p{L}\p{M}][\p{L}\p{M}\p{N} .'-]*$/u, "Enter a valid full name"),
+    email,
+  }).strict(), req.body);
+  await invitationRateLimit(req, input.email, "COUNSELLOR_INVITATION_CREATE", 10, 60);
   const now = new Date();
-  const passwordHash = await hashPassword(input.temporaryPassword);
+  const passwordHash = await hashPassword(randomToken(48));
   let user;
   try {
     user = await User.create({ fullName: input.fullName, email: input.email, passwordHash, role: "COUNSELLOR", passwordChangedAt: now, passwordExpiresAt: new Date(now.getTime() + config.PASSWORD_MAX_AGE_DAYS * 86400000) });
@@ -38,19 +80,20 @@ adminRouter.post("/users/counsellors", async (req, res) => {
     if (typeof error === "object" && error !== null && "code" in error && error.code === 11000) throw new ApiError(409, "ACCOUNT_EXISTS", "An account with that email already exists");
     throw error;
   }
-  await recordPassword(user._id, passwordHash);
-  const token = randomToken();
-  const verification = await EmailVerificationToken.create({ userId: user._id, tokenHash: sha256(token), expiresAt: new Date(Date.now() + 24 * 3600000) });
-  try {
-    await sendEmailVerification({ email: user.email, fullName: user.fullName, token });
-  } catch {
-    verification.usedAt = new Date(); await verification.save();
-    await SecurityAlert.create({ userId: user._id, type: "EMAIL_DELIVERY_FAILURE", severity: "MEDIUM", metadata: { purpose: "verification" } });
-    await audit(req, "EMAIL_DELIVERY_FAILURE", { actorId: req.auth!.user._id, subjectId: user._id, metadata: { purpose: "verification" } });
+  await audit(req, "COUNSELLOR_CREATED", { actorId: req.auth!.user._id, subjectId: user._id });
+  if (!(await issueCounsellorInvitation(req, user))) {
     throw new ApiError(503, "EMAIL_DELIVERY_UNAVAILABLE", "The account was created, but verification email delivery is temporarily unavailable");
   }
-  await audit(req, "COUNSELLOR_CREATED", { actorId: req.auth!.user._id, subjectId: user._id, metadata: { reason: input.reason } });
-  res.status(201).json({ user: { id: String(user._id), fullName: user.fullName, email: user.email, role: user.role, status: user.status } });
+  res.status(201).json({ user: { id: String(user._id), fullName: user.fullName, email: user.email, role: user.role, status: user.status, emailVerifiedAt: user.emailVerifiedAt }, message: "If the account is eligible, an invitation will be sent." });
+});
+
+adminRouter.post("/users/:id/resend-invitation", async (req, res) => {
+  strictBody(z.object({}).strict(), req.body);
+  const { id } = z.object({ id: z.string().regex(/^[a-f\d]{24}$/i) }).parse(req.params);
+  const user = await User.findOne({ _id: id, role: "COUNSELLOR", status: "ACTIVE", emailVerifiedAt: { $exists: false } });
+  await invitationRateLimit(req, user?.email ?? id, "COUNSELLOR_INVITATION_RESEND", 5, 15);
+  if (user) await issueCounsellorInvitation(req, user);
+  res.status(202).json({ message: "If the account is eligible, an invitation will be sent." });
 });
 
 adminRouter.patch("/users/:id/status", async (req, res) => {

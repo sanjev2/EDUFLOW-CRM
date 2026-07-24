@@ -6,6 +6,7 @@ import { StudentApplication } from "./student-application";
 import { SecurityCenter } from "../auth/security-center";
 import { AdminAssignments } from "./admin-assignments";
 import { AdminSecurityAlerts } from "./admin-events";
+import { AdminUsers } from "./admin-users";
 
 const navigation = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn(), pathname: "/dashboard/student" }));
 vi.mock("next/navigation", () => ({
@@ -184,5 +185,90 @@ describe("EduFlow CRM interface", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Submit application" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Complete the required application information.");
     expect(screen.getByRole("button", { name: "Submit application" })).toBeEnabled();
+  });
+
+  it("opens the accessible counsellor invitation dialog, focuses it and restores focus on Escape", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) return response({ user: { role: "ADMIN", status: "ACTIVE", mfaEnabled: true }, passwordExpired: false, mfaComplete: true });
+      return response({ users: [] });
+    }));
+    render(<AdminUsers />);
+    const open = await screen.findByRole("button", { name: "Add counsellor" });
+    fireEvent.click(open);
+    expect(screen.getByRole("dialog", { name: "Add counsellor" })).toBeInTheDocument();
+    expect(screen.getByText("Counsellors are invited by an administrator and cannot register publicly.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Full name")).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(open).toHaveFocus());
+  });
+
+  it("creates a counsellor without role or password input, refreshes the directory and shows pending status", async () => {
+    let finish!: (value: Response) => void;
+    let userLoads = 0;
+    const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) return response({ user: { role: "ADMIN", status: "ACTIVE", mfaEnabled: true }, passwordExpired: false, mfaComplete: true });
+      if (url.includes("/auth/csrf")) return response({ csrfToken: "test-csrf" });
+      if (url.includes("/users/counsellors")) {
+        expect(options?.body).toBe(JSON.stringify({ fullName: "New Counsellor", email: "new@example.test" }));
+        expect(String(options?.body)).not.toMatch(/password|role/i);
+        return new Promise<Response>((resolve) => { finish = resolve; });
+      }
+      if (url.includes("/admin/users")) {
+        userLoads += 1;
+        return response({ users: userLoads > 1 ? [{ _id: "c1", fullName: "New Counsellor", email: "new@example.test", role: "COUNSELLOR", status: "ACTIVE", mfaEnabled: false }] : [] });
+      }
+      return response({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminUsers />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add counsellor" }));
+    fireEvent.change(screen.getByLabelText("Full name"), { target: { value: "New Counsellor" } });
+    fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "new@example.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create and send invitation" }));
+    expect(screen.getByRole("button", { name: "Sending invitation…" })).toBeDisabled();
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    finish(await response({ user: { id: "c1", role: "COUNSELLOR" } }));
+    expect(await screen.findByRole("status")).toHaveTextContent("invitation was emailed");
+    fireEvent.click(screen.getAllByRole("button", { name: "Close" }).at(-1)!);
+    expect(await screen.findByText("INVITATION PENDING")).toBeInTheDocument();
+    expect(screen.getByText("COUNSELLOR")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/admin/users?")).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("resends an eligible invitation with a generic confirmation", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) return response({ user: { role: "ADMIN", status: "ACTIVE", mfaEnabled: true }, passwordExpired: false, mfaComplete: true });
+      if (url.includes("/auth/csrf")) return response({ csrfToken: "test-csrf" });
+      if (url.includes("/resend-invitation")) return response({ message: "If the account is eligible, an invitation will be sent." });
+      return response({ users: [{ _id: "c1", fullName: "Pending Counsellor", email: "pending@example.test", role: "COUNSELLOR", status: "ACTIVE", mfaEnabled: false }] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminUsers />);
+    fireEvent.click(await screen.findByRole("button", { name: "Resend invitation" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("If the account is eligible");
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/users/c1/resend-invitation"))).toBe(true);
+    confirm.mockRestore();
+  });
+
+  it("shows a generic accessible error when counsellor invitation fails", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) return response({ user: { role: "ADMIN", status: "ACTIVE", mfaEnabled: true }, passwordExpired: false, mfaComplete: true });
+      if (url.includes("/auth/csrf")) return response({ csrfToken: "test-csrf" });
+      if (url.includes("/users/counsellors")) return Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve({ error: { message: "Provider-specific failure" } }) } as Response);
+      return response({ users: [] });
+    }));
+    render(<AdminUsers />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add counsellor" }));
+    fireEvent.change(screen.getByLabelText("Full name"), { target: { value: "New Counsellor" } });
+    fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "new@example.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create and send invitation" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("could not be completed");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("Provider-specific");
   });
 });

@@ -3,13 +3,26 @@ import { config } from "../config.js";
 import { deliverDevelopmentLink } from "../security/outbox.js";
 
 export interface EmailMessage {
-  type: "VERIFY_EMAIL" | "RESET_PASSWORD";
+  type: "VERIFY_EMAIL" | "RESET_PASSWORD" | "COUNSELLOR_INVITATION";
   to: string;
   recipientName: string;
   subject: string;
   text: string;
   html: string;
   link: string;
+}
+
+export function counsellorInvitationMessage(input: { email: string; fullName: string; verificationToken: string; setupToken: string }): EmailMessage {
+  assertSafeAddress(input.email);
+  assertSafeDisplayName(input.fullName);
+  const link = `${config.PUBLIC_APP_URL}/accept-invitation?verification=${encodeURIComponent(input.verificationToken)}&setup=${encodeURIComponent(input.setupToken)}`;
+  const name = escapeHtml(input.fullName);
+  return {
+    type: "COUNSELLOR_INVITATION", to: input.email, recipientName: input.fullName, link,
+    subject: "Accept your EduFlow counsellor invitation",
+    text: `Hello ${input.fullName},\n\nAn EduFlow administrator invited you to a counsellor account. Verify your email and set your own password within 24 hours:\n${link}\n\nThis invitation is single-use. If you were not expecting it, ignore this email.`,
+    html: `<p>Hello ${name},</p><p>An EduFlow administrator invited you to a counsellor account.</p><p><a href="${escapeHtml(link)}">Verify your email and set your password</a></p><p>This single-use invitation expires in 24 hours.</p><p>If you were not expecting it, ignore this email.</p>`,
+  };
 }
 export interface EmailTransport { send(message: EmailMessage): Promise<void>; }
 
@@ -82,4 +95,7 @@ export async function sendEmailVerification(input: { email: string; fullName: st
 }
 export async function sendPasswordReset(input: { email: string; fullName: string; token: string }) {
   await configuredTransport().send(passwordResetMessage(input));
+}
+export async function sendCounsellorInvitation(input: { email: string; fullName: string; verificationToken: string; setupToken: string }) {
+  await configuredTransport().send(counsellorInvitationMessage(input));
 }

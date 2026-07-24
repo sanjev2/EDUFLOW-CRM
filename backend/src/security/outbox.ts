@@ -2,7 +2,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { config } from "../config.js";
 
-export interface OutboxMessage { type: "VERIFY_EMAIL" | "RESET_PASSWORD"; email: string; link: string; createdAt: string; developmentOnly: true; }
+export interface OutboxMessage { type: "VERIFY_EMAIL" | "RESET_PASSWORD" | "COUNSELLOR_INVITATION"; email: string; link: string; createdAt: string; developmentOnly: true; }
 const messages: OutboxMessage[] = [];
 const outboxFile = path.resolve(".runtime", "email-outbox.json");
 
