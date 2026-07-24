@@ -1,6 +1,14 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import path from "node:path";
 import { z } from "zod";
+
+const rootEnvironmentPath = path.basename(process.cwd()).toLowerCase() === "backend"
+  ? path.resolve(process.cwd(), "../.env")
+  : path.resolve(process.cwd(), ".env");
+const rootEnvironment = process.env.NODE_ENV === "test" || process.env.VITEST
+  ? { error: undefined }
+  : dotenv.config({ path: rootEnvironmentPath });
+export const configurationSource = rootEnvironment.error ? "process environment" : "root .env";
 
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
