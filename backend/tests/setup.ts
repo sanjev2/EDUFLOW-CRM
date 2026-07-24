@@ -6,3 +6,5 @@ process.env.FRONTEND_URL = "http://localhost:3100";
 process.env.ARGON2_MEMORY_KIB = "8192";
 process.env.LOG_LEVEL = "silent";
 process.env.UPLOAD_ROOT = `${process.env.TEMP ?? "C:\\Windows\\Temp"}\\eduflow-document-tests`;
+process.env.EMAIL_DELIVERY_MODE = "outbox";
+process.env.PUBLIC_APP_URL = "http://localhost:3100";
