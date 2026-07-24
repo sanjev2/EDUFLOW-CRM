@@ -1,6 +1,6 @@
 # EduFlow
 
-EduFlow is a responsive, security-led web application foundation for one education consultancy. It will support student enquiries and applications for three roles: student, counsellor and administrator.
+EduFlow is a responsive, security-led web application for one education consultancy. It supports student enquiries and applications for three roles: student, counsellor and administrator.
 
 This stage includes secure authentication, role-aware CRM workflows and private local document handling for students, assigned counsellors and administrators.
 
@@ -34,6 +34,7 @@ Gmail SMTP is compatible through `smtp.gmail.com` using TLS and a Google App Pas
 - `npm run lint`
 - `npm test`
 - `npm run build`
+- `npm run dev:status`
 
 See `docs/` for scope, security decisions, threat modelling and coursework traceability.
 

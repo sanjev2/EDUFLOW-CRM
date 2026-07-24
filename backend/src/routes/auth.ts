@@ -38,14 +38,21 @@ authRouter.post("/register", async (req, res) => {
     await recordPassword(user._id, passwordHash);
     const token = randomToken();
     const verification = await EmailVerificationToken.create({ userId: user._id, tokenHash: sha256(token), expiresAt: new Date(Date.now() + 24 * 3600000) });
+    let receipt: DeliveryReceipt | undefined;
     try {
-      await sendEmailVerification({ email: user.email, fullName: user.fullName, token });
+      receipt = await sendEmailVerification({ email: user.email, fullName: user.fullName, token });
     } catch {
-      verification.usedAt = new Date(); await verification.save();
-      await SecurityAlert.create({ userId: user._id, type: "EMAIL_DELIVERY_FAILURE", severity: "MEDIUM", metadata: { purpose: "verification" } });
-      await audit(req, "EMAIL_DELIVERY_FAILURE", { subjectId: user._id, metadata: { purpose: "verification" } });
+      receipt = undefined;
     }
-    await audit(req, "REGISTRATION", { subjectId: user._id });
+    if (!receipt || !providerAccepted(receipt)) {
+      verification.usedAt = new Date(); await verification.save();
+      const metadata = { purpose: "verification", ...(receipt ? deliveryReceiptMetadata(receipt) : { deliveryCategory: "LOCAL_FAILURE" }) };
+      await Promise.all([
+        SecurityAlert.create({ userId: user._id, type: "EMAIL_DELIVERY_FAILURE", severity: "MEDIUM", metadata }),
+        audit(req, "EMAIL_DELIVERY_FAILURE", { subjectId: user._id, metadata }),
+      ]);
+    }
+    await audit(req, "REGISTRATION", { subjectId: user._id, metadata: receipt ? deliveryReceiptMetadata(receipt) : { deliveryCategory: "LOCAL_FAILURE" } });
   } catch (error: unknown) {
     if (!(typeof error === "object" && error !== null && "code" in error && error.code === 11000)) throw error;
   }
@@ -61,16 +68,25 @@ authRouter.post("/resend-verification", async (req, res) => {
   await LoginAttempt.create({ emailHash, ipHash, outcome: "VERIFICATION_RESEND" });
   const user = await User.findOne({ email: input.email, emailVerifiedAt: { $exists: false }, status: "ACTIVE" });
   if (user) {
-    await EmailVerificationToken.updateMany({ userId: user._id, usedAt: { $exists: false } }, { usedAt: new Date() });
     const token = randomToken();
     const record = await EmailVerificationToken.create({ userId: user._id, tokenHash: sha256(token), expiresAt: new Date(Date.now() + 24 * 3600000) });
+    let receipt: DeliveryReceipt | undefined;
     try {
-      await sendEmailVerification({ email: user.email, fullName: user.fullName, token });
-      await audit(req, "EMAIL_VERIFICATION_RESEND", { subjectId: user._id });
+      receipt = await sendEmailVerification({ email: user.email, fullName: user.fullName, token });
     } catch {
+      receipt = undefined;
+    }
+    if (!receipt || !providerAccepted(receipt)) {
       record.usedAt = new Date(); await record.save();
-      await SecurityAlert.create({ userId: user._id, type: "EMAIL_DELIVERY_FAILURE", severity: "MEDIUM", metadata: { purpose: "verification" } });
-      await audit(req, "EMAIL_DELIVERY_FAILURE", { subjectId: user._id, metadata: { purpose: "verification" } });
+      const metadata = { purpose: "verification", ...(receipt ? deliveryReceiptMetadata(receipt) : { deliveryCategory: "LOCAL_FAILURE" }) };
+      await Promise.all([
+        SecurityAlert.create({ userId: user._id, type: "EMAIL_DELIVERY_FAILURE", severity: "MEDIUM", metadata }),
+        audit(req, "EMAIL_DELIVERY_FAILURE", { subjectId: user._id, metadata }),
+        audit(req, "EMAIL_VERIFICATION_RESEND", { subjectId: user._id, metadata }),
+      ]);
+    } else {
+      await EmailVerificationToken.updateMany({ userId: user._id, _id: { $ne: record._id }, usedAt: { $exists: false } }, { usedAt: new Date() });
+      await audit(req, "EMAIL_VERIFICATION_RESEND", { subjectId: user._id, metadata: deliveryReceiptMetadata(receipt) });
     }
   }
   res.status(202).json({ message: genericVerificationMessage });

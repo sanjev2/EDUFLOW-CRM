@@ -130,6 +130,34 @@ describe("verification resend and failure controls", () => {
     expect(JSON.stringify(audit)).not.toContain("smtp.internal");
     expect(JSON.stringify(audit)).not.toContain("token");
   });
+
+  it("treats a resolved provider rejection as failed registration delivery", async () => {
+    setEmailTransportForTests({ send: () => Promise.resolve({
+      ...receipt, acceptedRecipientCount: 0, rejectedRecipientCount: 1,
+      category: "REJECTED", smtpStatus: "550",
+    }) });
+    await register("rejected@example.test").expect(202);
+    expect((await EmailVerificationToken.findOne())!.usedAt).toBeInstanceOf(Date);
+    expect((await AuditLog.findOne({ event: "EMAIL_DELIVERY_FAILURE" }))?.metadata)
+      .toMatchObject({ deliveryCategory: "REJECTED", acceptedRecipientCount: 0, rejectedRecipientCount: 1 });
+  });
+
+  it("preserves an older verification token until a resend is accepted", async () => {
+    await register("resend-pending@example.test").expect(202);
+    const user = await User.findOne({ email: "resend-pending@example.test" });
+    const previous = await EmailVerificationToken.findOne({ userId: user!._id });
+    setEmailTransportForTests({ send: () => Promise.resolve({
+      ...receipt, acceptedRecipientCount: 0, pendingRecipientCount: 1,
+      category: "PENDING", smtpStatus: "450",
+    }) });
+    await request(app).post("/api/v1/auth/resend-verification").send({ email: user!.email }).expect(202);
+    expect((await EmailVerificationToken.findById(previous!._id))!.usedAt).toBeUndefined();
+    expect(await EmailVerificationToken.countDocuments({
+      userId: user!._id, usedAt: { $exists: false }, expiresAt: { $gt: new Date() },
+    })).toBe(1);
+    expect((await AuditLog.findOne({ event: "EMAIL_VERIFICATION_RESEND" }))?.metadata)
+      .toMatchObject({ deliveryCategory: "PENDING", pendingRecipientCount: 1 });
+  });
 });
 
 describe("delivery configuration", () => {
