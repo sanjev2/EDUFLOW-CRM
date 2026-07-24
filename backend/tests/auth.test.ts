@@ -195,6 +195,25 @@ describe("password reset and MFA", () => {
     const fresh = new URL(developmentOutbox().at(-1)!.link).searchParams.get("token")!;
     await request(app).post("/api/v1/auth/reset-password").send({ token: fresh, password: strong, passwordConfirmation: strong }).expect(400);
   });
+  it("clears a pre-reset account lock and ignores pre-reset failures after a successful reset", async () => {
+    const { user } = await registerAndVerify();
+    const emailHash = keyedHash(user!.email);
+    await User.updateOne({ _id: user!._id }, { failedLoginCount: 6, lockedUntil: new Date(Date.now() + 15 * 60_000) });
+    await LoginAttempt.insertMany(Array.from({ length: 3 }, () => ({
+      emailHash, ipHash: keyedHash("127.0.0.1"), outcome: "FAILURE", createdAt: new Date(),
+    })));
+    await request(app).post("/api/v1/auth/forgot-password").send({ email: user!.email }).expect(202);
+    const token = new URL(developmentOutbox().find((item) => item.type === "RESET_PASSWORD")!.link).searchParams.get("token")!;
+    const replacement = "Reset-Unlocks7-Account!";
+    await request(app).post("/api/v1/auth/reset-password")
+      .send({ token, password: replacement, passwordConfirmation: replacement })
+      .expect(200);
+    const updated = await User.findById(user!._id).select("+failedLoginCount");
+    expect(updated).toMatchObject({ failedLoginCount: 0 });
+    expect(updated!.lockedUntil).toBeUndefined();
+    await login(user!.email, replacement).expect(200);
+    expect(await LoginAttempt.countDocuments({ emailHash, outcome: "FAILURE" })).toBe(3);
+  });
   it("requires the current password for authenticated password change", async () => {
     await registerAndVerify(); const signedIn = await login(); const authCookie = cookie(signedIn);
     await request(app).post("/api/v1/auth/change-password").set("Cookie", authCookie).set("x-csrf-token", signedIn.body.csrfToken).send({ currentPassword: "Wrong-Horse9-Battery!", password: "Different-Horse8-Battery!", passwordConfirmation: "Different-Horse8-Battery!" }).expect(400);

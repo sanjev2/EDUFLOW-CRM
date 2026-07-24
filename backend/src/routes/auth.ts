@@ -127,8 +127,10 @@ authRouter.post("/login", async (req, res) => {
   const emailHash = keyedHash(input.email);
   const ipHash = keyedHash(req.ip ?? "");
   const since = new Date(Date.now() - 15 * 60000);
+  const user = await User.findOne({ email: input.email }).select("+passwordHash +failedLoginCount +mfaSecretEncrypted +recoveryCodeHashes");
+  const accountSince = user?.passwordChangedAt && user.passwordChangedAt > since ? user.passwordChangedAt : since;
   const [accountFailures, ipFailures] = await Promise.all([
-    LoginAttempt.countDocuments({ emailHash, outcome: "FAILURE", createdAt: { $gte: since } }),
+    LoginAttempt.countDocuments({ emailHash, outcome: "FAILURE", createdAt: { $gte: accountSince } }),
     LoginAttempt.countDocuments({ ipHash, outcome: "FAILURE", createdAt: { $gte: since } }),
   ]);
   if (ipFailures >= 20) throw new ApiError(429, "TOO_MANY_ATTEMPTS", "Too many attempts. Try again later.");
@@ -137,7 +139,6 @@ authRouter.post("/login", async (req, res) => {
     await audit(req, "CAPTCHA_FAILURE");
     throw new ApiError(428, "CAPTCHA_REQUIRED", "A CAPTCHA challenge is required");
   }
-  const user = await User.findOne({ email: input.email }).select("+passwordHash +failedLoginCount +mfaSecretEncrypted +recoveryCodeHashes");
   const valid = user ? await verifyPassword(user.passwordHash, input.password) : false;
   if (!user || !valid) {
     await LoginAttempt.create({ emailHash, ipHash, outcome: "FAILURE" });
@@ -235,7 +236,7 @@ authRouter.post("/reset-password", async (req, res) => {
   const record = await PasswordResetToken.findOne({ tokenHash: sha256(input.token), usedAt: { $exists: false }, expiresAt: { $gt: new Date() } }).select("+tokenHash");
   if (!record) throw new ApiError(400, "INVALID_TOKEN", "The reset link is invalid or expired");
   if (await passwordWasReused(record.userId, input.password)) throw new ApiError(400, "PASSWORD_REUSED", "Choose a password not used recently");
-  const user = await User.findById(record.userId).select("+passwordHash");
+  const user = await User.findById(record.userId).select("+passwordHash +failedLoginCount");
   if (!user) throw new ApiError(400, "INVALID_TOKEN", "The reset link is invalid or expired");
   const changed = await PasswordResetToken.updateOne({ _id: record._id, usedAt: { $exists: false } }, { usedAt: new Date() });
   if (!changed.modifiedCount) throw new ApiError(400, "INVALID_TOKEN", "The reset link is invalid or expired");
@@ -244,6 +245,8 @@ authRouter.post("/reset-password", async (req, res) => {
   user.passwordHash = passwordHash;
   user.passwordChangedAt = new Date();
   user.passwordExpiresAt = new Date(Date.now() + config.PASSWORD_MAX_AGE_DAYS * 86400000);
+  user.failedLoginCount = 0;
+  user.lockedUntil = undefined;
   await user.save();
   await recordPassword(user._id, oldHash);
   await recordPassword(user._id, passwordHash);
