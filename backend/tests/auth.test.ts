@@ -62,6 +62,18 @@ describe("registration and verification", () => {
 });
 
 describe("login controls", () => {
+  it("emits CORS approval only for the exact trusted frontend Origin", async () => {
+    const trusted = await request(app).options("/api/v1/auth/login")
+      .set("Origin", "http://localhost:3100")
+      .set("Access-Control-Request-Method", "POST")
+      .expect(204);
+    const untrusted = await request(app).options("/api/v1/auth/login")
+      .set("Origin", "http://evil.example")
+      .set("Access-Control-Request-Method", "POST")
+      .expect(200);
+    expect(trusted.headers["access-control-allow-origin"]).toBe("http://localhost:3100");
+    expect(untrusted.headers["access-control-allow-origin"]).toBeUndefined();
+  });
   it("requires the exact trusted Origin for login", async () => {
     await registerAndVerify();
     const missing = await request(app).post("/api/v1/auth/login").send({ email: "student@example.test", password: strong }).expect(403);
