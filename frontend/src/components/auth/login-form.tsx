@@ -1,14 +1,20 @@
 "use client";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { api, setPendingMfaChallenge } from "@/lib/api";
 import { AuthShell } from "./auth-shell";
 import { ErrorSummary, Field, PasswordField, SubmitButton } from "./form-controls";
 
 type LoginResult = { mfaRequired?: boolean; challenge?: string; csrfToken?: string; mfaEnrollmentRequired?: boolean; user?: { role: string } };
+const successMessages = {
+  "email-verified": "Email verified successfully. You can now sign in.",
+  "password-reset": "Password reset successful. Sign in with your new password.",
+} as const;
 export function LoginForm() {
   const router = useRouter();
+  const success = useSearchParams().get("success");
+  const confirmation = success && Object.hasOwn(successMessages, success) ? successMessages[success as keyof typeof successMessages] : "";
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [verificationRequired, setVerificationRequired] = useState(false);
@@ -31,6 +37,7 @@ export function LoginForm() {
   }
   return <AuthShell title="Welcome back" description="Sign in to your secure EduFlow workspace.">
     <form onSubmit={submit} className="mt-8 grid gap-5" noValidate>
+      {confirmation && <div role="status" className="flex items-start justify-between gap-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-900"><p>{confirmation}</p><button type="button" aria-label="Dismiss confirmation" className="shrink-0 font-bold" onClick={() => router.replace("/login")}>×</button></div>}
       <ErrorSummary message={error} />
       {verificationRequired && <p className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">Your email must be verified before sign-in. <Link className="font-semibold underline" href="/resend-verification">Request a new verification email</Link>.</p>}
       <Field label="Email address" name="email" type="email" autoComplete="email" required />

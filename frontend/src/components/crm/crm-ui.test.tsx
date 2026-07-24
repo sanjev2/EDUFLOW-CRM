@@ -30,12 +30,14 @@ describe("EduFlow CRM interface", () => {
   it("renders role-specific student navigation", () => {
     render(<AppShell role="STUDENT" title="Student dashboard"><p>Content</p></AppShell>);
     expect(screen.getAllByRole("link", { name: "My Profile" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("link", { name: "Documents" })[0]).toHaveAttribute("href", "/documents");
     expect(screen.queryByRole("link", { name: "Audit Logs" })).not.toBeInTheDocument();
   });
   it("renders role-specific administrator navigation", () => {
     navigation.pathname = "/dashboard/admin";
     render(<AppShell role="ADMIN" title="Administrator dashboard"><p>Content</p></AppShell>);
     expect(screen.getAllByRole("link", { name: "Assignments" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("link", { name: "Documents" })[0]).toHaveAttribute("href", "/admin/documents");
     expect(screen.getAllByRole("link", { name: "Security Alerts" }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole("link", { name: "Dashboard" })[0]).toHaveAttribute("aria-current", "page");
     expect(screen.queryByRole("button", { name: "Notifications" })).not.toBeInTheDocument();

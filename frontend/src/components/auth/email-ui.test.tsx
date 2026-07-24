@@ -2,16 +2,28 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ResendVerificationForm } from "./resend-verification-form";
 import { LoginForm } from "./login-form";
-import { ForgotPasswordForm } from "./forgot-reset-forms";
+import { ForgotPasswordForm, ResetPasswordForm } from "./forgot-reset-forms";
+import { VerifyEmailResult } from "./verify-email-result";
 
-const navigation = vi.hoisted(() => ({ push: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => navigation }));
+const navigation = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), params: new Map<string, string>() }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => navigation,
+  useSearchParams: () => ({ get: (key: string) => navigation.params.get(key) ?? null }),
+}));
 
 function response(body: unknown, ok = true, status = 200) {
   return Promise.resolve({ ok, status, json: () => Promise.resolve(body) } as Response);
 }
 
-beforeEach(() => { navigation.push.mockReset(); vi.restoreAllMocks(); });
+beforeEach(() => {
+  navigation.push.mockReset();
+  navigation.replace.mockReset();
+  navigation.params.clear();
+  window.localStorage.clear();
+  window.sessionStorage.clear();
+  window.history.replaceState({}, "", "/");
+  vi.restoreAllMocks();
+});
 
 describe("verification and recovery email interfaces", () => {
   it("submits a resend request and displays the generic success response", async () => {
@@ -50,5 +62,73 @@ describe("verification and recovery email interfaces", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send reset instructions" }));
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("If the account exists"));
     expect(screen.getByRole("status")).not.toHaveTextContent("unknown@example.test");
+  });
+
+  it("navigates safely to login after a successful password reset", async () => {
+    navigation.params.set("token", "single-use-reset-token");
+    vi.stubGlobal("fetch", vi.fn(() => response({ message: "Password reset successfully." })));
+    const history = vi.spyOn(window.history, "replaceState");
+    render(<ResetPasswordForm />);
+    fireEvent.change(screen.getByLabelText("New password"), { target: { value: "New-Password-Test7!" } });
+    fireEvent.change(screen.getByLabelText("Confirm new password"), { target: { value: "New-Password-Test7!" } });
+    fireEvent.click(screen.getByRole("button", { name: "Reset password" }));
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/login?success=password-reset"));
+    expect(history).toHaveBeenCalledWith({}, "", "/reset-password");
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+  });
+
+  it("does not redirect failed or expired reset tokens as success", async () => {
+    navigation.params.set("token", "expired-reset-token");
+    vi.stubGlobal("fetch", vi.fn(() => response({ error: { message: "The reset link is invalid or expired." } }, false, 400)));
+    render(<ResetPasswordForm />);
+    fireEvent.change(screen.getByLabelText("New password"), { target: { value: "New-Password-Test7!" } });
+    fireEvent.change(screen.getByLabelText("Confirm new password"), { target: { value: "New-Password-Test7!" } });
+    fireEvent.click(screen.getByRole("button", { name: "Reset password" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("invalid or expired");
+    expect(navigation.replace).not.toHaveBeenCalled();
+  });
+
+  it("offers sign in and automatically redirects after successful verification", async () => {
+    navigation.params.set("token", "single-use-verification-token");
+    vi.stubGlobal("fetch", vi.fn(() => response({ message: "Email verified successfully." })));
+    const history = vi.spyOn(window.history, "replaceState");
+    render(<VerifyEmailResult />);
+    const link = await screen.findByRole("link", { name: "Continue to sign in" });
+    expect(link).toHaveAttribute("href", "/login?success=email-verified");
+    expect(history).toHaveBeenCalledWith({}, "", "/verify-email");
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/login?success=email-verified"), { timeout: 2000 });
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+  });
+
+  it("keeps invalid verification tokens on the failure and resend pathway", async () => {
+    navigation.params.set("token", "expired-verification-token");
+    vi.stubGlobal("fetch", vi.fn(() => response({ error: { message: "The verification link is invalid or expired." } }, false, 400)));
+    render(<VerifyEmailResult />);
+    expect(await screen.findByRole("status")).toHaveTextContent("invalid or expired");
+    expect(screen.queryByRole("link", { name: "Continue to sign in" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "new verification email" })).toHaveAttribute("href", "/resend-verification");
+    expect(navigation.replace).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["password-reset", "Password reset successful. Sign in with your new password."],
+    ["email-verified", "Email verified successfully. You can now sign in."],
+  ])("shows the fixed %s login confirmation", (success, expected) => {
+    navigation.params.set("success", success);
+    render(<LoginForm />);
+    expect(screen.getByRole("status")).toHaveTextContent(expected);
+  });
+
+  it("never renders arbitrary query text or follows an external destination", () => {
+    navigation.params.set("success", "<img src=x onerror=alert(1)>");
+    navigation.params.set("message", "Attacker-controlled message");
+    navigation.params.set("redirect", "https://example.test/phishing");
+    render(<LoginForm />);
+    expect(screen.queryByText("Attacker-controlled message")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(navigation.push).not.toHaveBeenCalled();
+    expect(navigation.replace).not.toHaveBeenCalled();
   });
 });

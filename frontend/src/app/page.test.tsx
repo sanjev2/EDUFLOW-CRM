@@ -40,4 +40,11 @@ describe("landing page", () => {
       expect(screen.queryByText(unsupported)).not.toBeInTheDocument();
     }
   });
+
+  it("uses honest private-document copy without internal limitation wording", () => {
+    render(<Home />);
+    expect(screen.queryByText(/without implying private document storage/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Private PDF, JPEG and PNG documents use authenticated downloads and role-aware access/i)).toBeInTheDocument();
+    expect(screen.queryByText(/malware scanning|cloud backup|unlimited storage/i)).not.toBeInTheDocument();
+  });
 });

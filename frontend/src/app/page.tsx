@@ -67,7 +67,7 @@ export default function Home() {
     </section>
 
     <section id="workflow" className="landing-section bg-[var(--app-background)]">
-      <div className="mx-auto max-w-7xl px-5 lg:px-8"><div className="grid items-end gap-8 lg:grid-cols-2"><div><p className="section-kicker">A journey everyone can follow</p><h2 className="section-title">Progress that stays visible from start to finish</h2></div><p className="section-copy lg:pb-2">Track documentation readiness as a checklist and workflow stage—without implying private document storage. Every supported change remains visible in the application history.</p></div>
+      <div className="mx-auto max-w-7xl px-5 lg:px-8"><div className="grid items-end gap-8 lg:grid-cols-2"><div><p className="section-kicker">A journey everyone can follow</p><h2 className="section-title">Progress that stays visible from start to finish</h2></div><p className="section-copy lg:pb-2">Track documentation readiness through clear checklists and workflow stages. Private PDF, JPEG and PNG documents use authenticated downloads and role-aware access, while supported changes remain visible in the application history.</p></div>
       <ol className="workflow-track">{workflow.map((item, index) => <li key={item}><span>{index + 1}</span><div><strong>{item}</strong><small>{index === 3 ? "Checklist support" : index === 5 ? "Journey complete" : "Clear next step"}</small></div>{index < workflow.length - 1 && <ArrowRight aria-hidden />}</li>)}</ol></div>
     </section>
 
