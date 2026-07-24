@@ -101,6 +101,16 @@ describe("verification and recovery email interfaces", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send reset instructions" }));
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("If the account exists"));
     expect(screen.getByRole("status")).not.toHaveTextContent("unknown@example.test");
+    expect(screen.getByRole("link", { name: "Back to sign in" })).toHaveAttribute("href", "/login");
+  });
+
+  it("keeps forgot-password sign-in navigation during an error", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => response({ error: { message: "Please wait before trying again." } }, false, 429)));
+    render(<ForgotPasswordForm />);
+    fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "student@example.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send reset instructions" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("wait before trying again");
+    expect(screen.getByRole("link", { name: "Back to sign in" })).toHaveAttribute("href", "/login");
   });
 
   it("navigates safely to login after a successful password reset", async () => {
@@ -119,13 +129,22 @@ describe("verification and recovery email interfaces", () => {
 
   it("does not redirect failed or expired reset tokens as success", async () => {
     navigation.params.set("token", "expired-reset-token");
-    vi.stubGlobal("fetch", vi.fn(() => response({ error: { message: "The reset link is invalid or expired." } }, false, 400)));
+    vi.stubGlobal("fetch", vi.fn(() => response({ error: { code: "INVALID_TOKEN", message: "The reset link is invalid or expired." } }, false, 400)));
     render(<ResetPasswordForm />);
     fireEvent.change(screen.getByLabelText("New password"), { target: { value: "New-Password-Test7!" } });
     fireEvent.change(screen.getByLabelText("Confirm new password"), { target: { value: "New-Password-Test7!" } });
     fireEvent.click(screen.getByRole("button", { name: "Reset password" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("invalid or expired");
+    expect(await screen.findByRole("alert")).toHaveTextContent(/invalid.*expired/i);
     expect(navigation.replace).not.toHaveBeenCalled();
+    expect(screen.getByRole("link", { name: /new password reset link/i })).toHaveAttribute("href", "/forgot-password");
+    expect(screen.getByRole("link", { name: "Back to sign in" })).toHaveAttribute("href", "/login");
+  });
+
+  it("provides recovery navigation when the reset token is missing", () => {
+    render(<ResetPasswordForm />);
+    expect(screen.getByRole("alert")).toHaveTextContent("incomplete");
+    expect(screen.getByRole("link", { name: /new password reset link/i })).toHaveAttribute("href", "/forgot-password");
+    expect(screen.getByRole("link", { name: "Back to sign in" })).toHaveAttribute("href", "/login");
   });
 
   it("offers sign in and automatically redirects after successful verification", async () => {
@@ -148,6 +167,7 @@ describe("verification and recovery email interfaces", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("invalid or expired");
     expect(screen.queryByRole("link", { name: "Continue to sign in" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "new verification email" })).toHaveAttribute("href", "/resend-verification");
+    expect(screen.getByRole("link", { name: "Back to sign in" })).toHaveAttribute("href", "/login");
     expect(navigation.replace).not.toHaveBeenCalled();
   });
 
@@ -186,10 +206,18 @@ describe("verification and recovery email interfaces", () => {
     fireEvent.change(screen.getByLabelText("New password"), { target: { value: "Counsellor-Setup9!" } });
     fireEvent.change(screen.getByLabelText("Confirm new password"), { target: { value: "Counsellor-Setup9!" } });
     fireEvent.click(screen.getByRole("button", { name: "Set password and continue" }));
-    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/login?success=password-reset"));
+    expect(await screen.findByRole("link", { name: "Continue to sign in" })).toHaveAttribute("href", "/login");
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/login"), { timeout: 3000 });
     expect(window.location.search).toBe("");
     expect(window.localStorage.length).toBe(0);
     expect(window.sessionStorage.length).toBe(0);
+  });
+
+  it("keeps invitation recovery navigation visible for an invalid link", () => {
+    render(<AcceptCounsellorInvitation />);
+    expect(screen.getByRole("alert")).toHaveTextContent("incomplete");
+    expect(screen.getByText(/ask your administrator to resend/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to sign in" })).toHaveAttribute("href", "/login");
   });
 
   it("routes an authenticated counsellor to the counsellor dashboard", async () => {

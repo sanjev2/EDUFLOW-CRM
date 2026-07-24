@@ -2,15 +2,131 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import Link from "next/link";
 import { api, refreshCsrf } from "@/lib/api";
 import { AuthShell } from "./auth-shell";
 import { ErrorSummary, Field, SubmitButton } from "./form-controls";
 
 type Start = { qrCode: string; manualKey: string };
 export function MfaEnrolment() {
-  const router = useRouter(); const [setup, setSetup] = useState<Start>(); const [codes, setCodes] = useState<string[]>(); const [destination, setDestination] = useState(""); const [confirmed, setConfirmed] = useState(false); const [busy, setBusy] = useState(true); const [error, setError] = useState("");
-  useEffect(() => { void refreshCsrf().then(() => api<Start>("/api/v1/mfa/enrol/start", { method: "POST", body: "{}" })).then(setSetup).catch((reason: Error) => setError(reason.message)).finally(() => setBusy(false)); }, []);
-  async function confirm(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setBusy(true); setError(""); const data = new FormData(event.currentTarget); try { const result = await api<{ recoveryCodes: string[] }>("/api/v1/mfa/enrol/confirm", { method: "POST", body: JSON.stringify({ code: data.get("code") }) }); const me = await api<{ user: { role: "STUDENT" | "COUNSELLOR" | "ADMIN" }; mfaComplete: boolean }>("/api/v1/auth/me"); if (!me.mfaComplete) throw new Error("The secure session could not be confirmed. Please sign in again."); setCodes(result.recoveryCodes); setDestination(`/dashboard/${me.user.role.toLowerCase()}`); } catch (reason) { setError(reason instanceof Error ? reason.message : "MFA could not be enabled."); } finally { setBusy(false); } }
-  if (codes) return <AuthShell title="Save your recovery codes" description="These codes are shown once. Store them offline and never share them."><ul className="mt-6 grid grid-cols-2 gap-2 rounded-xl bg-slate-950 p-5 font-mono text-sm text-white">{codes.map((code) => <li key={code}>{code}</li>)}</ul><label className="mt-5 flex gap-3 text-sm"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />I stored these codes securely.</label><button disabled={!confirmed || !destination} onClick={() => router.replace(destination)} className="mt-5 w-full rounded-lg bg-blue-700 px-4 py-3 font-semibold text-white disabled:opacity-50">Finish enrolment</button></AuthShell>;
-  return <AuthShell title="Set up authenticator MFA" description="Administrators must finish this step before accessing administrator functions."><ErrorSummary message={error} />{setup && <div className="mt-6 grid gap-5"><Image unoptimized src={setup.qrCode} width={192} height={192} alt="QR code for authenticator enrolment" className="mx-auto h-48 w-48" /><div><p className="text-sm font-semibold">Manual setup key</p><code className="mt-1 block break-all rounded bg-slate-100 p-3 text-sm">{setup.manualKey}</code></div><form className="grid gap-4" onSubmit={confirm}><Field label="Six-digit verification code" name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" required /><SubmitButton busy={busy}>Enable MFA</SubmitButton></form></div>}{busy && !setup && <p className="mt-6" role="status">Preparing secure enrolment…</p>}</AuthShell>;
+  const router = useRouter();
+  const [setup, setSetup] = useState<Start>();
+  const [codes, setCodes] = useState<string[]>();
+  const [destination, setDestination] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    void refreshCsrf()
+      .then(() =>
+        api<Start>("/api/v1/mfa/enrol/start", { method: "POST", body: "{}" }),
+      )
+      .then(setSetup)
+      .catch((reason: Error) => setError(reason.message))
+      .finally(() => setBusy(false));
+  }, []);
+  async function confirm(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    const data = new FormData(event.currentTarget);
+    try {
+      const result = await api<{ recoveryCodes: string[] }>(
+        "/api/v1/mfa/enrol/confirm",
+        { method: "POST", body: JSON.stringify({ code: data.get("code") }) },
+      );
+      const me = await api<{
+        user: { role: "STUDENT" | "COUNSELLOR" | "ADMIN" };
+        mfaComplete: boolean;
+      }>("/api/v1/auth/me");
+      if (!me.mfaComplete)
+        throw new Error(
+          "The secure session could not be confirmed. Please sign in again.",
+        );
+      setCodes(result.recoveryCodes);
+      setDestination(`/dashboard/${me.user.role.toLowerCase()}`);
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "MFA could not be enabled.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+  if (codes)
+    return (
+      <AuthShell
+        title="Save your recovery codes"
+        description="These codes are shown once. Store them offline and never share them."
+      >
+        <ul className="mt-6 grid grid-cols-2 gap-2 rounded-xl bg-slate-950 p-5 font-mono text-sm text-white">
+          {codes.map((code) => (
+            <li key={code}>{code}</li>
+          ))}
+        </ul>
+        <label className="mt-5 flex gap-3 text-sm">
+          <input
+            type="checkbox"
+            checked={confirmed}
+            onChange={(event) => setConfirmed(event.target.checked)}
+          />
+          I stored these codes securely.
+        </label>
+        <button
+          disabled={!confirmed || !destination}
+          onClick={() => router.replace(destination)}
+          className="mt-5 w-full rounded-lg bg-blue-700 px-4 py-3 font-semibold text-white disabled:opacity-50"
+        >
+          Finish enrolment
+        </button>
+      </AuthShell>
+    );
+  return (
+    <AuthShell
+      title="Set up authenticator MFA"
+      description="Administrators must finish this step before accessing administrator functions."
+    >
+      <ErrorSummary message={error} />
+      {setup && (
+        <div className="mt-6 grid gap-5">
+          <Image
+            unoptimized
+            src={setup.qrCode}
+            width={192}
+            height={192}
+            alt="QR code for authenticator enrolment"
+            className="mx-auto h-48 w-48"
+          />
+          <div>
+            <p className="text-sm font-semibold">Manual setup key</p>
+            <code className="mt-1 block break-all rounded bg-slate-100 p-3 text-sm">
+              {setup.manualKey}
+            </code>
+          </div>
+          <form className="grid gap-4" onSubmit={confirm}>
+            <Field
+              label="Six-digit verification code"
+              name="code"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              pattern="[0-9]{6}"
+              required
+            />
+            <SubmitButton busy={busy}>Enable MFA</SubmitButton>
+          </form>
+        </div>
+      )}
+      {busy && !setup && (
+        <p className="mt-6" role="status">
+          Preparing secure enrolment…
+        </p>
+      )}
+      <Link
+        href="/login"
+        className="mt-5 inline-flex min-h-11 items-center font-semibold text-blue-700 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4"
+      >
+        Back to sign in
+      </Link>
+    </AuthShell>
+  );
 }

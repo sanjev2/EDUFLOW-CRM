@@ -8,7 +8,7 @@ import { strictBody, email, strongPassword } from "../security/validation.js";
 import { hashPassword, passwordWasReused, recordPassword, verifyPassword } from "../security/password.js";
 import { keyedHash, randomToken, sha256 } from "../security/crypto.js";
 import { audit } from "../security/audit.js";
-import { sendEmailVerification, sendPasswordReset } from "../email/delivery.js";
+import { deliveryReceiptMetadata, providerAccepted, sendEmailVerification, sendPasswordReset, type DeliveryReceipt } from "../email/delivery.js";
 import { ApiError } from "../errors.js";
 import { clearSessionCookie, createSession, rotateSession } from "../security/session.js";
 import { requireAuthentication, requireFreshAuthentication } from "../middleware/auth.js";
@@ -189,15 +189,26 @@ authRouter.post("/forgot-password", async (req, res) => {
   await LoginAttempt.create({ emailHash, ipHash, outcome: "PASSWORD_RESET_REQUEST" });
   const user = await User.findOne({ email: input.email, status: "ACTIVE", emailVerifiedAt: { $exists: true } });
   if (user) {
-    await PasswordResetToken.updateMany({ userId: user._id, usedAt: { $exists: false } }, { usedAt: new Date() });
     const token = randomToken();
     const record = await PasswordResetToken.create({ userId: user._id, tokenHash: sha256(token), expiresAt: new Date(Date.now() + 30 * 60000) });
+    let receipt: DeliveryReceipt | undefined;
     try {
-      await sendPasswordReset({ email: user.email, fullName: user.fullName, token });
+      receipt = await sendPasswordReset({ email: user.email, fullName: user.fullName, token });
     } catch {
-      record.usedAt = new Date(); await record.save();
-      await SecurityAlert.create({ userId: user._id, type: "EMAIL_DELIVERY_FAILURE", severity: "MEDIUM", metadata: { purpose: "password-reset" } });
-      await audit(req, "EMAIL_DELIVERY_FAILURE", { subjectId: user._id, metadata: { purpose: "password-reset" } });
+      receipt = undefined;
+    }
+    if (!receipt || !providerAccepted(receipt)) {
+      record.usedAt = new Date();
+      await record.save();
+      const metadata = { purpose: "password-reset", ...(receipt ? deliveryReceiptMetadata(receipt) : { deliveryCategory: "LOCAL_FAILURE" }) };
+      await Promise.all([
+        SecurityAlert.create({ userId: user._id, type: "EMAIL_DELIVERY_FAILURE", severity: "MEDIUM", metadata }),
+        audit(req, "EMAIL_DELIVERY_FAILURE", { subjectId: user._id, metadata }),
+        audit(req, "PASSWORD_RESET_REQUEST", { subjectId: user._id, metadata }),
+      ]);
+    } else {
+      await PasswordResetToken.updateMany({ userId: user._id, _id: { $ne: record._id }, usedAt: { $exists: false } }, { usedAt: new Date() });
+      await audit(req, "PASSWORD_RESET_REQUEST", { subjectId: user._id, metadata: deliveryReceiptMetadata(receipt) });
     }
   }
   res.status(202).json({ message: genericResetMessage });

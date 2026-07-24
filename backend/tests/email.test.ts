@@ -59,6 +59,9 @@ describe("email message delivery", () => {
     expect(delivered[0]!.text).toContain("30 minutes");
     expect(delivered[0]!.html).toContain("password does not change until the link is used");
     expect(JSON.stringify(response.body)).not.toContain("token");
+    expect((await AuditLog.findOne({ event: "PASSWORD_RESET_REQUEST" }))?.metadata).toMatchObject({
+      deliveryCategory: "ACCEPTED", acceptedRecipientCount: 1, rejectedRecipientCount: 0, pendingRecipientCount: 0,
+    });
   });
 
   it("escapes HTML and rejects recipient header injection", () => {
@@ -141,6 +144,24 @@ describe("delivery configuration", () => {
     setEmailTransportForTests({ send: () => Promise.reject(new Error("provider failure")) });
     await request(app).post("/api/v1/auth/forgot-password").send({ email: "verified@example.test" }).expect(202);
     expect((await PasswordResetToken.findOne())!.usedAt).toBeInstanceOf(Date);
+  });
+
+  it.each([
+    ["rejected", { ...receipt, acceptedRecipientCount: 0, rejectedRecipientCount: 1, category: "REJECTED" as const, smtpStatus: "550" }],
+    ["pending", { ...receipt, acceptedRecipientCount: 0, pendingRecipientCount: 1, category: "PENDING" as const, smtpStatus: "450" }],
+  ])("preserves the previous reset token when delivery is %s", async (_label, result) => {
+    const user = await verifiedUser();
+    const previous = await PasswordResetToken.create({
+      userId: user._id, tokenHash: "c".repeat(64), expiresAt: new Date(Date.now() + 30 * 60000),
+    });
+    setEmailTransportForTests({ send: () => Promise.resolve(result) });
+    const response = await request(app).post("/api/v1/auth/forgot-password").send({ email: user.email }).expect(202);
+    expect(response.body).toEqual({ message: "If the account exists, password reset instructions will be sent." });
+    expect((await PasswordResetToken.findById(previous._id))!.usedAt).toBeUndefined();
+    expect(await PasswordResetToken.countDocuments({ usedAt: { $exists: false }, expiresAt: { $gt: new Date() } })).toBe(1);
+    const failure = await AuditLog.findOne({ event: "PASSWORD_RESET_REQUEST" }).lean();
+    expect(failure?.metadata).toMatchObject({ deliveryCategory: result.category, smtpStatus: result.smtpStatus });
+    expect(JSON.stringify(failure)).not.toMatch(/verified@example|reset-password|token/i);
   });
 
   it("redacts SMTP credentials, token URLs and message bodies from structured logs", () => {

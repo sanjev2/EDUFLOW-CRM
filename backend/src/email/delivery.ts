@@ -101,6 +101,18 @@ export function providerAccepted(receipt: DeliveryReceipt) {
     && receipt.pendingRecipientCount === 0;
 }
 
+export function deliveryReceiptMetadata(receipt: DeliveryReceipt) {
+  return {
+    acceptedRecipientCount: receipt.acceptedRecipientCount,
+    rejectedRecipientCount: receipt.rejectedRecipientCount,
+    pendingRecipientCount: receipt.pendingRecipientCount,
+    smtpStatus: receipt.smtpStatus,
+    deliveryCategory: receipt.category,
+    ...(receipt.messageIdHash ? { messageIdHash: receipt.messageIdHash } : {}),
+    deliveredAt: receipt.deliveredAt,
+  };
+}
+
 export function verificationMessage(input: { email: string; fullName: string; token: string }): EmailMessage {
   assertSafeAddress(input.email);
   assertSafeDisplayName(input.fullName);

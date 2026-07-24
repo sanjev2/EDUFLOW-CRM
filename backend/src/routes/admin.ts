@@ -7,7 +7,7 @@ import { hashPassword } from "../security/password.js";
 import { config } from "../config.js";
 import { EmailVerificationToken, PasswordResetToken } from "../models/Tokens.js";
 import { keyedHash, randomToken, sha256 } from "../security/crypto.js";
-import { providerAccepted, sendCounsellorInvitation, type DeliveryReceipt } from "../email/delivery.js";
+import { deliveryReceiptMetadata, providerAccepted, sendCounsellorInvitation, type DeliveryReceipt } from "../email/delivery.js";
 import { audit } from "../security/audit.js";
 import { ApiError } from "../errors.js";
 import { Session } from "../models/Session.js";
@@ -134,9 +134,9 @@ async function issueCounsellorInvitation(req: import("express").Request, user: I
     await Promise.all([
       EmailVerificationToken.updateOne({ _id: verification._id }, { usedAt: now }),
       PasswordResetToken.updateOne({ _id: setup._id }, { usedAt: now }),
-      SecurityAlert.create({ userId: user._id, type: "EMAIL_DELIVERY_FAILURE", severity: "MEDIUM", metadata: { purpose: "counsellor-invitation", ...(receipt ? deliveryMetadata(receipt) : { deliveryCategory: "LOCAL_FAILURE" }) } }),
-      audit(req, "EMAIL_DELIVERY_FAILURE", { actorId: req.auth!.user._id, subjectId: user._id, metadata: { purpose: "counsellor-invitation", ...(receipt ? deliveryMetadata(receipt) : { deliveryCategory: "LOCAL_FAILURE" }) } }),
-      audit(req, "COUNSELLOR_INVITATION_FAILED", { actorId: req.auth!.user._id, subjectId: user._id, metadata: receipt ? deliveryMetadata(receipt) : { deliveryCategory: "LOCAL_FAILURE" } }),
+      SecurityAlert.create({ userId: user._id, type: "EMAIL_DELIVERY_FAILURE", severity: "MEDIUM", metadata: { purpose: "counsellor-invitation", ...(receipt ? deliveryReceiptMetadata(receipt) : { deliveryCategory: "LOCAL_FAILURE" }) } }),
+      audit(req, "EMAIL_DELIVERY_FAILURE", { actorId: req.auth!.user._id, subjectId: user._id, metadata: { purpose: "counsellor-invitation", ...(receipt ? deliveryReceiptMetadata(receipt) : { deliveryCategory: "LOCAL_FAILURE" }) } }),
+      audit(req, "COUNSELLOR_INVITATION_FAILED", { actorId: req.auth!.user._id, subjectId: user._id, metadata: receipt ? deliveryReceiptMetadata(receipt) : { deliveryCategory: "LOCAL_FAILURE" } }),
     ]);
     return false;
   }
@@ -148,7 +148,7 @@ async function issueCounsellorInvitation(req: import("express").Request, user: I
   await audit(req, "COUNSELLOR_INVITATION_SENT", {
     actorId: req.auth!.user._id,
     subjectId: user._id,
-    metadata: deliveryMetadata(receipt),
+    metadata: deliveryReceiptMetadata(receipt),
   });
   return true;
 }
@@ -157,18 +157,6 @@ class DeliveryNotAcceptedError extends Error {
   constructor(readonly receipt: DeliveryReceipt) {
     super("Email provider did not accept the intended recipient");
   }
-}
-
-function deliveryMetadata(receipt: DeliveryReceipt) {
-  return {
-    acceptedRecipientCount: receipt.acceptedRecipientCount,
-    rejectedRecipientCount: receipt.rejectedRecipientCount,
-    pendingRecipientCount: receipt.pendingRecipientCount,
-    smtpStatus: receipt.smtpStatus,
-    deliveryCategory: receipt.category,
-    ...(receipt.messageIdHash ? { messageIdHash: receipt.messageIdHash } : {}),
-    deliveredAt: receipt.deliveredAt,
-  };
 }
 
 adminRouter.post("/users/counsellors", async (req, res) => {
