@@ -31,3 +31,13 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   if (body?.csrfToken) setCsrfToken(body.csrfToken);
   return body as T;
 }
+
+export async function downloadApi(path: string) {
+  const normalizedPath = apiUrl.endsWith("/api/v1") && path.startsWith("/api/v1") ? path.slice("/api/v1".length) : path;
+  const response = await fetch(`${apiUrl}${normalizedPath}`, { credentials: "include", headers: { accept: "application/octet-stream" } });
+  if (!response.ok) {
+    const body = await response.json().catch(() => undefined);
+    throw new Error(body?.error?.message ?? "The document could not be downloaded.");
+  }
+  return response.blob();
+}

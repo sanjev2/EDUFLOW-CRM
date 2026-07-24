@@ -18,7 +18,7 @@ const navigation = {
   ],
   ADMIN: [
     ["Dashboard", "/dashboard/admin", LayoutDashboard], ["Users", "/admin/users", Users],
-    ["Assignments", "/admin/assignments", BriefcaseBusiness], ["Audit Logs", "/admin/audit-logs", FileClock],
+    ["Assignments", "/admin/assignments", BriefcaseBusiness], ["Documents", "/admin/documents", BookOpen], ["Audit Logs", "/admin/audit-logs", FileClock],
     ["Security Alerts", "/admin/security-alerts", AlertTriangle], ["Security", "/security", ShieldCheck],
   ],
 } as const;
