@@ -6,16 +6,18 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 const links = [
   ["Product", "/#product"],
-  ["How it works", "/#workflow"],
+  ["Workflow", "/#workflow"],
+  ["Automations", "/#automations"],
   ["Security", "/#security"],
-  ["For consultancies", "/#consultancies"],
 ] as const;
 
 export function PublicLayout({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!open) return;
+    closeButton.current?.focus();
     const close = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setOpen(false);
@@ -45,7 +47,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
       {open && <div className="fixed inset-0 z-50 lg:hidden">
         <button className="absolute inset-0 bg-slate-950/60" aria-label="Close navigation overlay" onClick={() => setOpen(false)} />
         <div id="mobile-navigation" role="dialog" aria-modal="true" aria-label="Mobile navigation" className="absolute right-0 flex h-full w-[min(88vw,360px)] flex-col bg-white p-5 text-[var(--text)] shadow-2xl">
-          <div className="flex items-center justify-between border-b pb-5"><span className="font-extrabold text-[var(--navy)]">Explore EduFlow</span><button aria-label="Close navigation" className="rounded-lg p-2" onClick={() => { setOpen(false); trigger.current?.focus(); }}><X /></button></div>
+          <div className="flex items-center justify-between border-b pb-5"><span className="font-extrabold text-[var(--navy)]">Explore EduFlow</span><button ref={closeButton} aria-label="Close navigation" className="rounded-lg p-2" onClick={() => { setOpen(false); trigger.current?.focus(); }}><X /></button></div>
           <div className="grid gap-1 py-5">{links.map(([label, href]) => <Link key={href} className="rounded-xl px-3 py-3 font-semibold hover:bg-blue-50" href={href} onClick={() => setOpen(false)}>{label}</Link>)}</div>
           <div className="mt-auto grid gap-3"><Link className="rounded-xl border border-[var(--border)] px-4 py-3 text-center font-bold" href="/login">Sign in</Link><Link className="rounded-xl bg-[var(--primary)] px-4 py-3 text-center font-bold text-[var(--navy)]" href="/register">Get started</Link></div>
         </div>
@@ -58,7 +60,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
         <div><p className="font-bold text-white">Product</p><div className="mt-4 grid gap-3 text-sm"><Link href="/#workflow">How it works</Link><Link href="/#security">Security</Link><Link href="/login">Sign in</Link></div></div>
         <div><p className="font-bold text-white">Get started</p><div className="mt-4 grid gap-3 text-sm"><Link href="/register">Create student account</Link><Link href="/forgot-password">Reset password</Link></div></div>
       </div>
-      <div className="mx-auto mt-10 max-w-7xl border-t border-white/15 pt-6 text-xs">© {new Date().getFullYear()} EduFlow. Education consultancy workspace.</div>
+      <div className="mx-auto mt-10 flex max-w-7xl flex-col gap-2 border-t border-white/15 pt-6 text-xs sm:flex-row sm:items-center sm:justify-between"><span>© {new Date().getFullYear()} EduFlow. Education consultancy workspace.</span><span>Verified access, protected sessions and accountable activity.</span></div>
     </footer>
   </div>;
 }
