@@ -19,6 +19,16 @@
 - Downloads use authenticated controllers with resource-level authorization, attachment disposition, `nosniff` and private no-store caching. Student ownership, current counsellor assignment and explicit administrator authorization are evaluated server-side.
 - Mutations require the existing session CSRF token and an exact trusted Origin. Upload attempts are rate limited. Upload, download, deletion, denial and validation rejection are audited without file contents or storage paths.
 - No malware-scanning engine is included. Production requires hardened private storage, backups, retention controls and malware scanning.
+
+## Email delivery
+
+- Verification and reset links use validated `PUBLIC_APP_URL`; attacker-controlled Host headers are never used.
+- Outbox delivery is permitted only outside production and is stored under the ignored runtime directory. SMTP success does not also write an outbox copy.
+- SMTP configuration validates host, port, secure mode, credentials and sender identity. STARTTLS is required when implicit TLS is disabled.
+- Messages include fixed subjects plus plain-text and escaped minimal HTML. Recipient and sender values reject header injection.
+- Public registration, resend and recovery responses remain generic. Resend/recovery abuse controls use normalized email and IP hashes.
+- Delivery failures never expose provider details. Newly issued undelivered tokens are invalidated and sanitized alerts/audit events are created.
+- SMTP credentials, message bodies, token fields, URLs, authorization, cookies and CSRF headers are excluded or redacted from application logs.
 - Formal penetration testing is deferred until feature implementation is complete.
 
 ## CRM resource authorisation

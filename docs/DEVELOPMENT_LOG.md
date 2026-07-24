@@ -32,5 +32,7 @@
 - Added role-specific dashboard summaries and original responsive EduFlow application shell.
 - Added private local PDF/JPEG/PNG document storage with 5 MB limits, signature validation, cryptographically random storage keys, hash verification, authenticated delivery and cleanup-safe security tests.
 - Added student document management, assigned-counsellor document context and audited administrator oversight. No malware scanner is included; hardened production storage, backups and scanning remain future deployment work.
+- Added provider-independent verification and password-recovery email delivery with development outbox and TLS-capable SMTP modes. Added generic, rate-limited verification resend and safe login guidance.
+- Added mocked transport tests for message content, enumeration resistance, configuration rejection, HTML/header safety and sanitized delivery failures. Automated tests never contact a real SMTP server.
 - Added student, counsellor and administrator CRM pages using the locked colour/token system.
 - Added CRM integration and interface tests. Secure documents, final landing redesign and formal penetration testing remain deferred.

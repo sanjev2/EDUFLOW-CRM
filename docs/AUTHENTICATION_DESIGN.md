@@ -21,7 +21,11 @@ Passwords are 12–128 characters and require uppercase, lowercase, numeric and 
 
 ## Verification and reset
 
-Email verification and password reset use 256-bit random, single-use, expiring tokens. MongoDB stores SHA-256 token hashes only. Development links appear only in the in-memory development outbox; production never exposes tokens through that facility. A password reset invalidates earlier reset tokens and every session.
+Email verification and password reset use 256-bit random, single-use, expiring tokens. MongoDB stores SHA-256 token hashes only. Delivery uses a provider-independent service with plain-text and minimal HTML messages. Links are constructed only from validated `PUBLIC_APP_URL`, never the request Host header.
+
+Outbox mode is development/testing-only and writes labelled messages to ignored `.runtime/email-outbox.json`; token URLs are not returned by public APIs. SMTP mode uses TLS-capable standard SMTP through Nodemailer. Production rejects outbox mode and requires complete SMTP/sender configuration. Delivery failure invalidates the newly issued token and records sanitized operational evidence. A password reset invalidates earlier reset tokens and every session.
+
+`POST /api/v1/auth/resend-verification` always gives the same response for unknown, verified and ineligible accounts. Requests are normalized, recorded and rate-limited by both email hash and IP hash. Eligible resend requests invalidate older unused verification tokens before issuing one replacement.
 
 ## Login protections
 

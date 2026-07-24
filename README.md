@@ -22,6 +22,12 @@ API: `http://localhost:5001/api/health`
 
 Private files are stored beneath the backend-controlled `UPLOAD_ROOT` (default `uploads`) and are never exposed as static files. PDF, JPEG and PNG files up to 5 MB are checked by extension, declared type and file signature. Local storage does not include a malware-scanning engine; production requires hardened storage, backups and malware scanning.
 
+## Email delivery
+
+Development defaults to `EMAIL_DELIVERY_MODE=outbox`; verification and reset messages are written only to the ignored `.runtime/email-outbox.json` file and are labelled development-only. Real delivery requires `EMAIL_DELIVERY_MODE=smtp` plus validated SMTP and sender settings. Production refuses outbox mode.
+
+Gmail SMTP is compatible through `smtp.gmail.com` using TLS and a Google App Password. Enable Google 2-Step Verification, create an App Password, and place it only in the ignored local `.env` as `SMTP_PASSWORD`. Never use or share the normal Gmail password. Production should use a dedicated transactional email provider rather than a personal Gmail mailbox.
+
 ## Commands
 
 - `npm run typecheck`

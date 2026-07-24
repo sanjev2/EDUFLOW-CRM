@@ -25,6 +25,8 @@ Strict Zod input schemas, Argon2id password hashing, generic identity responses,
 
 Document controls address malicious content, MIME spoofing, double extensions, oversized bodies, path traversal, symbolic-link escape, predictable object names, direct-object-reference attacks and public caching. The server checks extension, declared type and signature, limits files to 5 MB, stores random names inside a canonical private root, verifies SHA-256 integrity on download and returns inaccessible and nonexistent resources through the same generic response. Counsellor access depends on the current assignment record; administrator access is explicit, MFA-backed and audited. Malware scanning, off-host backups and production storage isolation remain deployment-stage requirements.
 
+Email threats include account enumeration, resend flooding, Host-header link poisoning, SMTP credential disclosure, header injection, HTML injection, token leakage and unlimited undelivered tokens. Controls include generic responses, hashed IP/account throttles, validated `PUBLIC_APP_URL`, validated sender/recipient fields, HTML escaping, structured-log redaction, token hashing and invalidation after failed delivery. Production cannot fall back to the development outbox.
+
 ## Residual risks
 
 - The in-process throttle decision uses MongoDB attempt records and has not yet been validated under distributed deployment.
