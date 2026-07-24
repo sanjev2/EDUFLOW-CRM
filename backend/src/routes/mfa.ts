@@ -11,6 +11,7 @@ import { ApiError } from "../errors.js";
 import { audit } from "../security/audit.js";
 import { createSession, rotateSession } from "../security/session.js";
 import { verifyPassword } from "../security/password.js";
+import { AuditLog } from "../models/AuditLog.js";
 
 export const mfaRouter = Router();
 
@@ -31,7 +32,17 @@ mfaRouter.post("/login", async (req, res) => {
       await audit(req, "RECOVERY_CODE_USE", { subjectId: user._id });
     }
   } else {
-    valid = (await verify({ secret: decrypt(user.mfaSecretEncrypted), token: input.code })).valid;
+    let secret: string;
+    try {
+      secret = decrypt(user.mfaSecretEncrypted);
+    } catch {
+      throw new ApiError(
+        409,
+        "MFA_REENROLMENT_REQUIRED",
+        "MFA configuration requires secure re-enrolment. Use a recovery code, or reset your password to continue securely.",
+      );
+    }
+    valid = (await verify({ secret, token: input.code })).valid;
   }
   if (!valid) {
     challenge.attempts += 1;
@@ -70,6 +81,12 @@ mfaRouter.post("/enrol/confirm", requireAuthentication, requireFreshAuthenticati
   const { csrf } = await rotateSession(req, res, req.auth!.session._id, user, true);
   await SecurityAlert.create({ userId: user._id, type: "MFA_ENABLED", severity: "MEDIUM", metadata: {} });
   await audit(req, "MFA_ENROLMENT", { actorId: user._id });
+  const recoveryRequired = await AuditLog.exists({
+    subjectId: user._id,
+    event: "MFA_RECOVERY_REENROLMENT_REQUIRED",
+    createdAt: { $gte: user.passwordChangedAt },
+  });
+  if (recoveryRequired) await audit(req, "MFA_RECOVERY_REENROLMENT_COMPLETED", { actorId: user._id, subjectId: user._id });
   res.json({ recoveryCodes, csrfToken: csrf });
 });
 

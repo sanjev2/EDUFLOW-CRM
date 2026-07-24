@@ -20,7 +20,11 @@ export function encrypt(value: string) {
 export function decrypt(value: string) {
   const [ivText, tagText, encryptedText] = value.split(".");
   if (!ivText || !tagText || !encryptedText) throw new Error("Invalid encrypted value");
-  const decipher = createDecipheriv("aes-256-gcm", encryptionKey, Buffer.from(ivText, "base64url"));
-  decipher.setAuthTag(Buffer.from(tagText, "base64url"));
-  return Buffer.concat([decipher.update(Buffer.from(encryptedText, "base64url")), decipher.final()]).toString("utf8");
+  const iv = Buffer.from(ivText, "base64url");
+  const tag = Buffer.from(tagText, "base64url");
+  const encrypted = Buffer.from(encryptedText, "base64url");
+  if (iv.length !== 12 || tag.length !== 16 || encrypted.length === 0) throw new Error("Invalid encrypted value");
+  const decipher = createDecipheriv("aes-256-gcm", encryptionKey, iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
 }

@@ -31,8 +31,18 @@ export function MfaChallengeForm() {
       );
       router.replace(`/dashboard/${result.user.role.toLowerCase()}`);
     } catch (reason) {
+      const caught = reason as Error & { code?: string };
+      const safeMessage = caught.code === "INVALID_MFA_CODE"
+        ? "The verification code is invalid. Check the current code and try again."
+        : caught.code === "INVALID_MFA_CHALLENGE"
+          ? "Your MFA challenge expired or was already used. Sign in again."
+          : caught.code === "TOO_MANY_ATTEMPTS"
+            ? "MFA verification is temporarily rate-limited. Wait and sign in again."
+            : caught.code === "MFA_REENROLMENT_REQUIRED"
+              ? "MFA configuration requires secure re-enrolment. Use a recovery code, or reset your password to continue securely."
+              : "MFA verification is temporarily unavailable. Please sign in and try again.";
       setError(
-        reason instanceof Error ? reason.message : "Verification failed.",
+        safeMessage,
       );
     } finally {
       setBusy(false);

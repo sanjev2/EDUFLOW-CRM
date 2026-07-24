@@ -71,7 +71,7 @@ export const requireRole = (...roles: Role[]): RequestHandler => async (req, _re
 export const csrfProtection: RequestHandler = (req, _res, next) => {
   if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return next();
   const origin = req.get("origin");
-  if (req.method === "POST" && req.path === "/api/v1/auth/login") {
+  if (req.method === "POST" && ["/api/v1/auth/login", "/api/v1/mfa/login"].includes(req.path)) {
     if (origin !== config.FRONTEND_URL) return next(new ApiError(403, "CSRF_REJECTED", "Request origin was rejected"));
     return next();
   }

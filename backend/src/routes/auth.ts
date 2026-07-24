@@ -6,7 +6,7 @@ import { CaptchaChallenge } from "../models/CaptchaChallenge.js";
 import { LoginAttempt, MfaChallenge, SecurityAlert } from "../models/Security.js";
 import { strictBody, email, strongPassword } from "../security/validation.js";
 import { hashPassword, passwordWasReused, recordPassword, verifyPassword } from "../security/password.js";
-import { keyedHash, randomToken, sha256 } from "../security/crypto.js";
+import { decrypt, keyedHash, randomToken, sha256 } from "../security/crypto.js";
 import { audit } from "../security/audit.js";
 import { deliveryReceiptMetadata, providerAccepted, sendEmailVerification, sendPasswordReset, type DeliveryReceipt } from "../email/delivery.js";
 import { ApiError } from "../errors.js";
@@ -236,7 +236,7 @@ authRouter.post("/reset-password", async (req, res) => {
   const record = await PasswordResetToken.findOne({ tokenHash: sha256(input.token), usedAt: { $exists: false }, expiresAt: { $gt: new Date() } }).select("+tokenHash");
   if (!record) throw new ApiError(400, "INVALID_TOKEN", "The reset link is invalid or expired");
   if (await passwordWasReused(record.userId, input.password)) throw new ApiError(400, "PASSWORD_REUSED", "Choose a password not used recently");
-  const user = await User.findById(record.userId).select("+passwordHash +failedLoginCount");
+  const user = await User.findById(record.userId).select("+passwordHash +failedLoginCount +mfaSecretEncrypted +recoveryCodeHashes");
   if (!user) throw new ApiError(400, "INVALID_TOKEN", "The reset link is invalid or expired");
   const changed = await PasswordResetToken.updateOne({ _id: record._id, usedAt: { $exists: false } }, { usedAt: new Date() });
   if (!changed.modifiedCount) throw new ApiError(400, "INVALID_TOKEN", "The reset link is invalid or expired");
@@ -247,10 +247,26 @@ authRouter.post("/reset-password", async (req, res) => {
   user.passwordExpiresAt = new Date(Date.now() + config.PASSWORD_MAX_AGE_DAYS * 86400000);
   user.failedLoginCount = 0;
   user.lockedUntil = undefined;
+  let mfaReenrolmentRequired = false;
+  if (user.mfaEnabled) {
+    try {
+      if (!user.mfaSecretEncrypted) throw new Error("Missing encrypted MFA secret");
+      decrypt(user.mfaSecretEncrypted);
+    } catch {
+      mfaReenrolmentRequired = true;
+      user.mfaEnabled = false;
+      user.mfaSecretEncrypted = undefined;
+      user.recoveryCodeHashes = [];
+    }
+  }
   await user.save();
   await recordPassword(user._id, oldHash);
   await recordPassword(user._id, passwordHash);
   await Session.updateMany({ userId: user._id, revokedAt: { $exists: false } }, { revokedAt: new Date() });
+  if (mfaReenrolmentRequired) {
+    await MfaChallenge.updateMany({ userId: user._id, usedAt: { $exists: false } }, { usedAt: new Date() });
+    await audit(req, "MFA_RECOVERY_REENROLMENT_REQUIRED", { subjectId: user._id });
+  }
   await SecurityAlert.create({ userId: user._id, type: "PASSWORD_RESET", severity: "MEDIUM", metadata: {} });
   await audit(req, "PASSWORD_RESET", { subjectId: user._id });
   res.json({ message: "Password reset successfully. Sign in again." });

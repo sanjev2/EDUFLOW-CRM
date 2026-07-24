@@ -5,6 +5,8 @@ import { LoginForm } from "./login-form";
 import { ForgotPasswordForm, ResetPasswordForm } from "./forgot-reset-forms";
 import { VerifyEmailResult } from "./verify-email-result";
 import { AcceptCounsellorInvitation } from "./accept-counsellor-invitation";
+import { MfaChallengeForm } from "./mfa-challenge-form";
+import { setPendingMfaChallenge } from "@/lib/api";
 
 const navigation = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), params: new Map<string, string>() }));
 vi.mock("next/navigation", () => ({
@@ -27,6 +29,22 @@ beforeEach(() => {
 });
 
 describe("verification and recovery email interfaces", () => {
+  it("shows a safe actionable MFA re-enrolment error and clears loading", async () => {
+    setPendingMfaChallenge("single-use-mfa-challenge");
+    vi.stubGlobal("fetch", vi.fn(() => response({
+      error: { code: "MFA_REENROLMENT_REQUIRED", message: "internal cryptographic detail" },
+    }, false, 409)));
+    render(<MfaChallengeForm />);
+    fireEvent.change(screen.getByLabelText("Authenticator code"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue securely" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Use a recovery code, or reset your password");
+    expect(alert).not.toHaveTextContent("cryptographic");
+    expect(screen.getByRole("button", { name: "Continue securely" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Use a recovery code" })).toBeEnabled();
+    expect(screen.getByRole("link", { name: "Back to sign in" })).toHaveAttribute("href", "/login");
+  });
+
   it("submits a resend request and displays the generic success response", async () => {
     vi.stubGlobal("fetch", vi.fn(() => response({ message: "If the account is eligible, verification instructions will be sent." })));
     render(<ResendVerificationForm />);

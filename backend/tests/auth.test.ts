@@ -9,6 +9,7 @@ import { Session } from "../src/models/Session.js";
 import { LoginAttempt } from "../src/models/Security.js";
 import { MfaChallenge } from "../src/models/Security.js";
 import { PasswordResetToken } from "../src/models/Tokens.js";
+import { AuditLog } from "../src/models/AuditLog.js";
 import { hashPassword } from "../src/security/password.js";
 import { decrypt, encrypt, keyedHash, sha256 } from "../src/security/crypto.js";
 import { clearDevelopmentOutbox, developmentOutbox } from "../src/security/outbox.js";
@@ -37,6 +38,11 @@ async function registerAndVerify(email = "student@example.test") {
 }
 function login(email = "student@example.test", password = strong) {
   return request(app).post("/api/v1/auth/login").set("Origin", "http://localhost:3100").send({ email, password });
+}
+function completeMfa(challenge: string, code: string, recovery = false) {
+  return request(app).post("/api/v1/mfa/login")
+    .set("Origin", "http://localhost:3100")
+    .send({ challenge, code, recovery });
 }
 function cookie(response: request.Response) {
   return (response.headers["set-cookie"] as unknown as string[])[0]!;
@@ -230,16 +236,16 @@ describe("password reset and MFA", () => {
     expect(pending.body.mfaRequired).toBe(true);
     const currentSecret = decrypt((await User.findOne().select("+mfaSecretEncrypted"))!.mfaSecretEncrypted!);
     const loginCode = await generate({ secret: currentSecret });
-    await request(app).post("/api/v1/mfa/login").send({ challenge: pending.body.challenge, code: loginCode, recovery: false }).expect(200);
+    await completeMfa(pending.body.challenge, loginCode).expect(200);
   });
   it("consumes each recovery code once", async () => {
     await registerAndVerify(); const signedIn = await login(); const authCookie = cookie(signedIn); const csrf = signedIn.body.csrfToken;
     const started = await request(app).post("/api/v1/mfa/enrol/start").set("Cookie", authCookie).set("x-csrf-token", csrf).send({});
     const confirmed = await request(app).post("/api/v1/mfa/enrol/confirm").set("Cookie", authCookie).set("x-csrf-token", csrf).send({ code: await generate({ secret: started.body.manualKey }) });
     const pending = await login();
-    await request(app).post("/api/v1/mfa/login").send({ challenge: pending.body.challenge, code: confirmed.body.recoveryCodes[0], recovery: true }).expect(200);
+    await completeMfa(pending.body.challenge, confirmed.body.recoveryCodes[0], true).expect(200);
     const next = await login();
-    await request(app).post("/api/v1/mfa/login").send({ challenge: next.body.challenge, code: confirmed.body.recoveryCodes[0], recovery: true }).expect(400);
+    await completeMfa(next.body.challenge, confirmed.body.recoveryCodes[0], true).expect(400);
   });
   it("rejects expired and exhausted MFA challenges", async () => {
     await registerAndVerify(); const signedIn = await login(); const authCookie = cookie(signedIn); const csrf = signedIn.body.csrfToken;
@@ -247,10 +253,59 @@ describe("password reset and MFA", () => {
     await request(app).post("/api/v1/mfa/enrol/confirm").set("Cookie", authCookie).set("x-csrf-token", csrf).send({ code: await generate({ secret: started.body.manualKey }) });
     const pending = await login();
     await MfaChallenge.updateOne({}, { expiresAt: new Date(Date.now() - 1000) });
-    await request(app).post("/api/v1/mfa/login").send({ challenge: pending.body.challenge, code: "000000", recovery: false }).expect(400);
+    await completeMfa(pending.body.challenge, "000000").expect(400);
     const next = await login();
     await MfaChallenge.updateOne({ challengeHash: sha256(next.body.challenge) }, { attempts: 5 });
-    await request(app).post("/api/v1/mfa/login").send({ challenge: next.body.challenge, code: "000000", recovery: false }).expect(400);
+    await completeMfa(next.body.challenge, "000000").expect(400);
+  });
+  it("requires the exact trusted Origin for MFA login", async () => {
+    const missing = await request(app).post("/api/v1/mfa/login")
+      .send({ challenge: "a".repeat(20), code: "000000", recovery: false })
+      .expect(403);
+    const wrong = await request(app).post("/api/v1/mfa/login")
+      .set("Origin", "http://evil.example")
+      .send({ challenge: "a".repeat(20), code: "000000", recovery: false })
+      .expect(403);
+    expect(missing.body.error.code).toBe("CSRF_REJECTED");
+    expect(wrong.body.error.code).toBe("CSRF_REJECTED");
+  });
+  it("returns a safe recovery path when the encrypted MFA secret is unreadable", async () => {
+    await registerAndVerify(); const signedIn = await login(); const authCookie = cookie(signedIn); const csrf = signedIn.body.csrfToken;
+    const started = await request(app).post("/api/v1/mfa/enrol/start").set("Cookie", authCookie).set("x-csrf-token", csrf).send({});
+    const confirmed = await request(app).post("/api/v1/mfa/enrol/confirm").set("Cookie", authCookie).set("x-csrf-token", csrf).send({ code: await generate({ secret: started.body.manualKey }) });
+    await User.updateOne({}, { mfaSecretEncrypted: "AAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAA.AA" });
+    const pending = await login();
+    const failed = await completeMfa(pending.body.challenge, "000000").expect(409);
+    expect(failed.body.error).toMatchObject({ code: "MFA_REENROLMENT_REQUIRED" });
+    expect(JSON.stringify(failed.body)).not.toMatch(/secret|cipher|auth tag/i);
+    expect((await MfaChallenge.findOne({ challengeHash: sha256(pending.body.challenge) }))!.attempts).toBe(0);
+    await completeMfa(pending.body.challenge, confirmed.body.recoveryCodes[0], true).expect(200);
+    const reused = await login();
+    await completeMfa(reused.body.challenge, confirmed.body.recoveryCodes[0], true).expect(400);
+  });
+  it("turns unreadable MFA state into mandatory re-enrolment only after a successful password reset", async () => {
+    const { user } = await registerAndVerify();
+    await User.updateOne({ _id: user!._id }, {
+      role: "ADMIN",
+      mfaEnabled: true,
+      mfaSecretEncrypted: "AAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAA.AA",
+      recoveryCodeHashes: [sha256("SAFE-ONCE")],
+    });
+    const pending = await login();
+    await request(app).post("/api/v1/auth/forgot-password").send({ email: user!.email }).expect(202);
+    const token = new URL(developmentOutbox().find((item) => item.type === "RESET_PASSWORD")!.link).searchParams.get("token")!;
+    const replacement = "Recovery-Reset8-Secure!";
+    await request(app).post("/api/v1/auth/reset-password")
+      .send({ token, password: replacement, passwordConfirmation: replacement })
+      .expect(200);
+    const updated = await User.findById(user!._id).select("+mfaSecretEncrypted +recoveryCodeHashes");
+    expect(updated).toMatchObject({ mfaEnabled: false, recoveryCodeHashes: [] });
+    expect(updated!.mfaSecretEncrypted).toBeUndefined();
+    expect(await MfaChallenge.countDocuments({ userId: user!._id, usedAt: { $exists: false } })).toBe(0);
+    await completeMfa(pending.body.challenge, "000000").expect(400);
+    expect(await AuditLog.exists({ subjectId: user!._id, event: "MFA_RECOVERY_REENROLMENT_REQUIRED" })).toBeTruthy();
+    const signedIn = await login(user!.email, replacement).expect(200);
+    expect(signedIn.body.mfaEnrollmentRequired).toBe(true);
   });
 });
 
@@ -293,7 +348,7 @@ describe("deny-by-default roles", () => {
     admin.mfaSecretEncrypted = encrypt(secret);
     await admin.save();
     const pending = await login("admin@example.test");
-    const completed = await request(app).post("/api/v1/mfa/login").send({ challenge: pending.body.challenge, code: await generate({ secret }), recovery: false }).expect(200);
+    const completed = await completeMfa(pending.body.challenge, await generate({ secret })).expect(200);
     await request(app).get("/api/v1/access/admin").set("Cookie", cookie(completed)).expect(200);
   });
   it("routes password-expired users only to password recovery controls", async () => {
