@@ -19,6 +19,8 @@ export interface IUser {
   mfaSecretEncrypted?: string;
   recoveryCodeHashes: string[];
   lastAuthenticatedAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 const userSchema = new Schema<IUser>({

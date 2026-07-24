@@ -20,6 +20,8 @@ export interface IStudentProfile {
   intendedIntake?: string;
   previousVisaRefusal?: boolean;
   refusalExplanation?: string;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 const schema = new Schema<IStudentProfile>({

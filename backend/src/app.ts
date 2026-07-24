@@ -16,6 +16,7 @@ import { adminRouter } from "./routes/admin.js";
 import { accessRouter } from "./routes/access.js";
 import { crmRouter } from "./routes/crm.js";
 import { documentRouter } from "./routes/documents.js";
+import { privacyRouter } from "./routes/privacy.js";
 
 export const app = express();
 app.disable("x-powered-by");
@@ -46,6 +47,7 @@ app.use("/api/v1/admin", adminRouter);
 app.use("/api/v1/access", accessRouter);
 app.use("/api/v1/crm", crmRouter);
 app.use("/api/v1/documents", documentRouter);
+app.use("/api/v1/privacy", privacyRouter);
 if (config.NODE_ENV === "test") app.get("/api/v1/test/error", () => { throw new ApiError(418, "TEST_ERROR", "Test error"); });
 app.use(notFound);
 app.use(errorHandler);
