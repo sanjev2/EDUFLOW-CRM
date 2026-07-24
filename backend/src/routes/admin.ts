@@ -80,10 +80,16 @@ adminRouter.post("/users/counsellors", async (req, res) => {
     if (typeof error === "object" && error !== null && "code" in error && error.code === 11000) throw new ApiError(409, "ACCOUNT_EXISTS", "An account with that email already exists");
     throw error;
   }
-  await audit(req, "COUNSELLOR_CREATED", { actorId: req.auth!.user._id, subjectId: user._id });
   if (!(await issueCounsellorInvitation(req, user))) {
-    throw new ApiError(503, "EMAIL_DELIVERY_UNAVAILABLE", "The account was created, but verification email delivery is temporarily unavailable");
+    const removed = await User.deleteOne({ _id: user._id });
+    await Promise.all([
+      EmailVerificationToken.deleteMany({ userId: user._id }),
+      PasswordResetToken.deleteMany({ userId: user._id }),
+    ]);
+    if (removed.deletedCount !== 1) throw new Error("Provisional counsellor cleanup failed");
+    throw new ApiError(503, "EMAIL_DELIVERY_UNAVAILABLE", "Invitation delivery is temporarily unavailable. No account was created");
   }
+  await audit(req, "COUNSELLOR_CREATED", { actorId: req.auth!.user._id, subjectId: user._id });
   res.status(201).json({ user: { id: String(user._id), fullName: user.fullName, email: user.email, role: user.role, status: user.status, emailVerifiedAt: user.emailVerifiedAt }, message: "If the account is eligible, an invitation will be sent." });
 });
 

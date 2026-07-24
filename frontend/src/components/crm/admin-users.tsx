@@ -47,8 +47,18 @@ export function AdminUsers() {
       setInviteSuccess("Counsellor account created. An invitation was emailed so they can verify their address and set a password.");
       form.reset();
       await load();
-    } catch {
-      setInviteError("The counsellor invitation could not be completed. Check the details and try again.");
+    } catch (reason) {
+      const code = reason instanceof Error && "code" in reason ? String(reason.code) : "";
+      const safeMessages: Record<string, string> = {
+        ACCOUNT_EXISTS: "That email address is already registered.",
+        COUNSELLOR_INVITATION_RATE_LIMITED: "Invitation requests are temporarily limited. Please wait and try again.",
+        MFA_REQUIRED: "Administrator MFA verification is required. Sign in again and complete MFA.",
+        ADMIN_MFA_ENROLMENT_REQUIRED: "Administrator MFA verification is required. Sign in again and complete MFA.",
+        FRESH_AUTHENTICATION_REQUIRED: "Your administrator verification has expired. Sign in again and complete MFA.",
+        EMAIL_DELIVERY_UNAVAILABLE: "Email delivery is temporarily unavailable. No counsellor account was created. Please try again later.",
+        VALIDATION_ERROR: "Check the counsellor's full name and email address, then try again.",
+      };
+      setInviteError(safeMessages[code] ?? "The counsellor invitation could not be completed. Check the details and try again.");
     } finally {
       setInviteBusy(false);
     }

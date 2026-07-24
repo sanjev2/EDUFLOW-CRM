@@ -255,12 +255,12 @@ describe("EduFlow CRM interface", () => {
     confirm.mockRestore();
   });
 
-  it("shows a generic accessible error when counsellor invitation fails", async () => {
+  it("shows a safe actionable delivery error without exposing provider details", async () => {
     vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) => {
       const url = String(input);
       if (url.includes("/auth/me")) return response({ user: { role: "ADMIN", status: "ACTIVE", mfaEnabled: true }, passwordExpired: false, mfaComplete: true });
       if (url.includes("/auth/csrf")) return response({ csrfToken: "test-csrf" });
-      if (url.includes("/users/counsellors")) return Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve({ error: { message: "Provider-specific failure" } }) } as Response);
+      if (url.includes("/users/counsellors")) return Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve({ error: { code: "EMAIL_DELIVERY_UNAVAILABLE", message: "Provider-specific failure" } }) } as Response);
       return response({ users: [] });
     }));
     render(<AdminUsers />);
@@ -268,7 +268,8 @@ describe("EduFlow CRM interface", () => {
     fireEvent.change(screen.getByLabelText("Full name"), { target: { value: "New Counsellor" } });
     fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "new@example.test" } });
     fireEvent.click(screen.getByRole("button", { name: "Create and send invitation" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("could not be completed");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Email delivery is temporarily unavailable");
+    expect(screen.getByRole("alert")).toHaveTextContent("No counsellor account was created");
     expect(screen.getByRole("alert")).not.toHaveTextContent("Provider-specific");
   });
 });

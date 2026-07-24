@@ -83,16 +83,36 @@ describe("administrator counsellor invitations", () => {
     expect(await User.countDocuments({ email: payload.email, role: "COUNSELLOR" })).toBe(1);
   });
 
-  it("sanitizes SMTP failure, invalidates setup tokens and records alerts", async () => {
+  it("sanitizes SMTP failure, rolls back the provisional account and permits a safe retry", async () => {
     const admin = await identity("ADMIN");
     setEmailTransportForTests({ send: () => Promise.reject(new Error("provider password=secret token=secret")) });
     const response = await create(admin, { ...payload, email: "failure@example.test" }).expect(503);
     expect(JSON.stringify(response.body)).not.toMatch(/provider|secret|token/i);
-    expect((await EmailVerificationToken.findOne())!.usedAt).toBeInstanceOf(Date);
-    expect((await PasswordResetToken.findOne())!.usedAt).toBeInstanceOf(Date);
+    expect(response.body.error.code).toBe("EMAIL_DELIVERY_UNAVAILABLE");
+    expect(await User.countDocuments({ email: "failure@example.test" })).toBe(0);
+    expect(await EmailVerificationToken.countDocuments()).toBe(0);
+    expect(await PasswordResetToken.countDocuments()).toBe(0);
     expect(await SecurityAlert.countDocuments({ type: "EMAIL_DELIVERY_FAILURE" })).toBe(1);
-    expect(await AuditLog.countDocuments({ event: "COUNSELLOR_CREATED" })).toBe(1);
+    expect(await AuditLog.countDocuments({ event: "COUNSELLOR_CREATED" })).toBe(0);
     expect(await AuditLog.countDocuments({ event: "COUNSELLOR_INVITATION_FAILED" })).toBe(1);
+    setEmailTransportForTests(capture);
+    await create(admin, { ...payload, email: "failure@example.test" }).expect(201);
+    expect(await User.countDocuments({ email: "failure@example.test", role: "COUNSELLOR" })).toBe(1);
+    expect(delivered).toHaveLength(1);
+  });
+
+  it("rejects stale MFA assurance, invalid CSRF, wrong Origin and excessive creation attempts", async () => {
+    const admin = await identity("ADMIN");
+    await Session.updateOne({ userId: admin.user._id }, { freshUntil: new Date(Date.now() - 1000) });
+    expect((await create(admin, { ...payload, email: "stale@example.test" }).expect(403)).body.error.code).toBe("FRESH_AUTHENTICATION_REQUIRED");
+    await Session.updateOne({ userId: admin.user._id }, { freshUntil: new Date(Date.now() + 600000) });
+    await request(app).post("/api/v1/admin/users/counsellors").set("Cookie", admin.cookie).set("Origin", "http://localhost:3100").set("x-csrf-token", "invalid").send(payload).expect(403);
+    await request(app).post("/api/v1/admin/users/counsellors").set("Cookie", admin.cookie).set("Origin", "http://evil.example").set("x-csrf-token", admin.csrf).send(payload).expect(403);
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await create(admin, { ...payload, email: `limited-${attempt}@example.test` }).expect(201);
+    }
+    const limited = await create(admin, { ...payload, email: "limited-final@example.test" }).expect(429);
+    expect(limited.body.error.code).toBe("COUNSELLOR_INVITATION_RATE_LIMITED");
   });
 
   it("resends only eligible invitations with generic, rate-limited responses", async () => {
