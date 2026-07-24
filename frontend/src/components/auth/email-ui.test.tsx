@@ -56,6 +56,44 @@ describe("verification and recovery email interfaces", () => {
     expect(link).toHaveAttribute("href", "/resend-verification");
   });
 
+  it("recovers a stale authenticated CSRF state once and completes login", async () => {
+    let loginAttempts = 0;
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/auth/csrf")) return response({ csrfToken: "refreshed-csrf" });
+      if (url.includes("/auth/login")) {
+        loginAttempts += 1;
+        if (loginAttempts === 1) return response({ error: { code: "CSRF_REJECTED", message: "CSRF token is missing or invalid" } }, false, 403);
+        return response({ user: { role: "STUDENT" }, csrfToken: "new-session-csrf" });
+      }
+      return response({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<LoginForm />);
+    fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "student@example.test" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "Password-Test7!" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await waitFor(() => expect(navigation.push).toHaveBeenCalledWith("/dashboard/student"));
+    expect(loginAttempts).toBe(2);
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/auth/csrf"))).toHaveLength(1);
+  });
+
+  it("does not retry CSRF recovery indefinitely and replaces technical wording", async () => {
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/auth/csrf")) return response({ csrfToken: "refreshed-csrf" });
+      return response({ error: { code: "CSRF_REJECTED", message: "CSRF token is missing or invalid" } }, false, 403);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<LoginForm />);
+    fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "student@example.test" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "Password-Test7!" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("secure sign-in session could not be refreshed");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("CSRF token");
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/auth/login"))).toHaveLength(2);
+  });
+
   it("keeps forgot-password confirmation generic", async () => {
     vi.stubGlobal("fetch", vi.fn(() => response({ message: "If the account exists, password reset instructions will be sent." })));
     render(<ForgotPasswordForm />);

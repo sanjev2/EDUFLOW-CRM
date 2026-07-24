@@ -147,12 +147,18 @@ authRouter.post("/login", async (req, res) => {
   await user.save();
   await LoginAttempt.create({ emailHash, ipHash, outcome: "SUCCESS" });
   if (user.mfaEnabled) {
+    if (req.auth) {
+      await Session.updateOne({ _id: req.auth.session._id }, { revokedAt: new Date() });
+      clearSessionCookie(res);
+    }
     const challengeToken = randomToken();
     await MfaChallenge.create({ userId: user._id, challengeHash: sha256(challengeToken), expiresAt: new Date(Date.now() + 5 * 60000), attempts: 0 });
     await audit(req, "LOGIN_SUCCESS", { subjectId: user._id, metadata: { mfaPending: true } });
     return res.json({ mfaRequired: true, challenge: challengeToken });
   }
-  const { csrf } = await createSession(req, res, user, user.role !== "ADMIN");
+  const { csrf } = req.auth
+    ? await rotateSession(req, res, req.auth.session._id, user, user.role !== "ADMIN")
+    : await createSession(req, res, user, user.role !== "ADMIN");
   await audit(req, "LOGIN_SUCCESS", { subjectId: user._id });
   await audit(req, "SESSION_CREATION", { subjectId: user._id });
   res.json({ user: safeUser(user), csrfToken: csrf, mfaEnrollmentRequired: user.role === "ADMIN" });

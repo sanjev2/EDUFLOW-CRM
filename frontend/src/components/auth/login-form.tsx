@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
-import { api, setPendingMfaChallenge } from "@/lib/api";
+import { api, refreshCsrf, setPendingMfaChallenge } from "@/lib/api";
 import { AuthShell } from "./auth-shell";
 import { ErrorSummary, Field, PasswordField, SubmitButton } from "./form-controls";
 
@@ -19,18 +19,28 @@ export function LoginForm() {
   const [error, setError] = useState("");
   const [verificationRequired, setVerificationRequired] = useState(false);
   const [captcha, setCaptcha] = useState<{ challengeId: string; prompt: string }>();
+  async function authenticate(body: Record<string, unknown>) {
+    try {
+      return await api<LoginResult>("/api/v1/auth/login", { method: "POST", body: JSON.stringify(body) });
+    } catch (reason) {
+      const caught = reason as Error & { code?: string };
+      if (caught.code !== "CSRF_REJECTED") throw reason;
+      await refreshCsrf();
+      return api<LoginResult>("/api/v1/auth/login", { method: "POST", body: JSON.stringify(body) });
+    }
+  }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError(""); setVerificationRequired(false);
     const data = new FormData(event.currentTarget);
     try {
-      const result = await api<LoginResult>("/api/v1/auth/login", { method: "POST", body: JSON.stringify({ email: data.get("email"), password: data.get("password"), captchaId: captcha?.challengeId, captchaAnswer: data.get("captchaAnswer") || undefined }) });
+      const result = await authenticate({ email: data.get("email"), password: data.get("password"), captchaId: captcha?.challengeId, captchaAnswer: data.get("captchaAnswer") || undefined });
       if (result.mfaRequired && result.challenge) {
         setPendingMfaChallenge(result.challenge); router.push("/mfa-challenge");
       } else if (result.mfaEnrollmentRequired) router.push("/mfa-enrolment");
       else router.push(`/dashboard/${result.user?.role.toLowerCase() === "admin" ? "admin" : result.user?.role.toLowerCase()}`);
     } catch (reason: unknown) {
       const caught = reason as Error & { code?: string };
-      setError(caught.message);
+      setError(caught.code === "CSRF_REJECTED" ? "Your secure sign-in session could not be refreshed. Reload the page and try again." : caught.message);
       if (caught.code === "EMAIL_VERIFICATION_REQUIRED") setVerificationRequired(true);
       if (caught.code === "CAPTCHA_REQUIRED") setCaptcha(await api("/api/v1/auth/captcha", { method: "POST" }));
     } finally { setBusy(false); }

@@ -204,7 +204,7 @@ describe("administrator counsellor invitations", () => {
     expect(JSON.stringify(reset.body)).not.toContain(setupToken);
     expect(JSON.stringify(reset.body)).not.toContain(password);
     expect(JSON.stringify(reset.body)).not.toContain("http");
-    const login = await request(app).post("/api/v1/auth/login").send({ email: payload.email, password }).expect(200);
+    const login = await request(app).post("/api/v1/auth/login").set("Origin", "http://localhost:3100").send({ email: payload.email, password }).expect(200);
     expect(login.body.user.role).toBe("COUNSELLOR");
   });
 });

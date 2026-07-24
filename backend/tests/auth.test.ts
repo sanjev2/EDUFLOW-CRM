@@ -36,7 +36,7 @@ async function registerAndVerify(email = "student@example.test") {
   return { token, user: await User.findOne({ email }) };
 }
 function login(email = "student@example.test", password = strong) {
-  return request(app).post("/api/v1/auth/login").send({ email, password });
+  return request(app).post("/api/v1/auth/login").set("Origin", "http://localhost:3100").send({ email, password });
 }
 function cookie(response: request.Response) {
   return (response.headers["set-cookie"] as unknown as string[])[0]!;
@@ -62,6 +62,27 @@ describe("registration and verification", () => {
 });
 
 describe("login controls", () => {
+  it("requires the exact trusted Origin for login", async () => {
+    await registerAndVerify();
+    const missing = await request(app).post("/api/v1/auth/login").send({ email: "student@example.test", password: strong }).expect(403);
+    const crossSite = await request(app).post("/api/v1/auth/login").set("Origin", "http://evil.example").send({ email: "student@example.test", password: strong }).expect(403);
+    expect(missing.body.error.code).toBe("CSRF_REJECTED");
+    expect(crossSite.body.error.code).toBe("CSRF_REJECTED");
+  });
+  it("recovers login from an existing session without its in-memory CSRF token", async () => {
+    await registerAndVerify();
+    const first = await login().expect(200);
+    const firstSession = await Session.findOne({ revokedAt: { $exists: false } });
+    const second = await request(app).post("/api/v1/auth/login")
+      .set("Origin", "http://localhost:3100")
+      .set("Cookie", cookie(first))
+      .send({ email: "student@example.test", password: strong })
+      .expect(200);
+    expect(second.body.csrfToken).toBeTruthy();
+    expect((await Session.findById(firstSession!._id))!.revokedAt).toBeInstanceOf(Date);
+    await request(app).get("/api/v1/auth/me").set("Cookie", cookie(first)).expect(401);
+    await request(app).get("/api/v1/auth/me").set("Cookie", cookie(second)).expect(200);
+  });
   it("creates a session for valid verified credentials with hardened cookie", async () => {
     await registerAndVerify();
     const response = await login().expect(200);
@@ -99,8 +120,8 @@ describe("login controls", () => {
     const challenge = await request(app).post("/api/v1/auth/captcha").send({}).expect(200);
     const numbers = (challenge.body.prompt as string).match(/\d+/g)!.map(Number);
     const answer = String(numbers[0]! + numbers[1]!);
-    await request(app).post("/api/v1/auth/login").send({ email: "student@example.test", password: strong, captchaId: challenge.body.challengeId, captchaAnswer: answer }).expect(200);
-    await request(app).post("/api/v1/auth/login").send({ email: "student@example.test", password: strong, captchaId: challenge.body.challengeId, captchaAnswer: answer }).expect(428);
+    await request(app).post("/api/v1/auth/login").set("Origin", "http://localhost:3100").send({ email: "student@example.test", password: strong, captchaId: challenge.body.challengeId, captchaAnswer: answer }).expect(200);
+    await request(app).post("/api/v1/auth/login").set("Origin", "http://localhost:3100").send({ email: "student@example.test", password: strong, captchaId: challenge.body.challengeId, captchaAnswer: answer }).expect(428);
   });
 });
 

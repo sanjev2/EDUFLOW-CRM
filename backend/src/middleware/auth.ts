@@ -69,8 +69,13 @@ export const requireRole = (...roles: Role[]): RequestHandler => async (req, _re
   next();
 };
 export const csrfProtection: RequestHandler = (req, _res, next) => {
-  if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method) || !req.auth) return next();
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return next();
   const origin = req.get("origin");
+  if (req.method === "POST" && req.path === "/api/v1/auth/login") {
+    if (origin !== config.FRONTEND_URL) return next(new ApiError(403, "CSRF_REJECTED", "Request origin was rejected"));
+    return next();
+  }
+  if (!req.auth) return next();
   if (origin && origin !== config.FRONTEND_URL) return next(new ApiError(403, "CSRF_REJECTED", "Request origin was rejected"));
   const supplied = req.get("x-csrf-token");
   if (!supplied || !safeEqual(sha256(supplied), req.auth.session.csrfHash)) return next(new ApiError(403, "CSRF_REJECTED", "CSRF token is missing or invalid"));
