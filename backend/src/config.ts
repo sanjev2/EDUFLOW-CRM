@@ -1,4 +1,5 @@
 import "dotenv/config";
+import path from "node:path";
 import { z } from "zod";
 
 const schema = z.object({
@@ -16,6 +17,7 @@ const schema = z.object({
   ARGON2_MEMORY_KIB: z.coerce.number().int().min(8192).default(19456),
   ARGON2_TIME_COST: z.coerce.number().int().min(2).default(2),
   ARGON2_PARALLELISM: z.coerce.number().int().min(1).default(1),
+  UPLOAD_ROOT: z.string().min(1).default(path.resolve("uploads")),
 });
 
 const parsed = schema.safeParse(process.env);
