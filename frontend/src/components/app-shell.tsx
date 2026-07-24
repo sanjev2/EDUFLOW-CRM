@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { AlertTriangle, BookOpen, BriefcaseBusiness, ClipboardList, FileClock, FileText, GraduationCap, LayoutDashboard, LogOut, Menu, ShieldCheck, UserRound, Users, X } from "lucide-react";
+import { AlertTriangle, BookOpen, BriefcaseBusiness, ClipboardList, Database, FileClock, FileText, GraduationCap, LayoutDashboard, LogOut, Menu, ShieldCheck, UserRound, Users, X } from "lucide-react";
 import { api, refreshCsrf } from "@/lib/api";
 
 export type AppRole = "STUDENT" | "COUNSELLOR" | "ADMIN";
@@ -10,16 +10,16 @@ type ShellUser = { id: string; fullName: string; email: string; role: AppRole; s
 const navigation = {
   STUDENT: [
     ["Dashboard", "/dashboard/student", LayoutDashboard], ["My Profile", "/profile", UserRound],
-    ["My Application", "/application", FileText], ["Documents", "/documents", BookOpen], ["Security", "/security", ShieldCheck],
+    ["My Application", "/application", FileText], ["Documents", "/documents", BookOpen], ["Privacy & data", "/privacy", Database], ["Security", "/security", ShieldCheck],
   ],
   COUNSELLOR: [
     ["Dashboard", "/dashboard/counsellor", LayoutDashboard], ["Assigned Students", "/students", Users],
-    ["Tasks", "/tasks", ClipboardList], ["Security", "/security", ShieldCheck],
+    ["Tasks", "/tasks", ClipboardList], ["Privacy & data", "/privacy", Database], ["Security", "/security", ShieldCheck],
   ],
   ADMIN: [
     ["Dashboard", "/dashboard/admin", LayoutDashboard], ["Users", "/admin/users", Users],
     ["Assignments", "/admin/assignments", BriefcaseBusiness], ["Documents", "/admin/documents", BookOpen], ["Audit Logs", "/admin/audit-logs", FileClock],
-    ["Security Alerts", "/admin/security-alerts", AlertTriangle], ["Security", "/security", ShieldCheck],
+    ["Security Alerts", "/admin/security-alerts", AlertTriangle], ["Privacy & data", "/privacy", Database], ["Security", "/security", ShieldCheck],
   ],
 } as const;
 const roleNames: Record<AppRole, string> = { STUDENT: "Student", COUNSELLOR: "Counsellor", ADMIN: "Administrator" };
