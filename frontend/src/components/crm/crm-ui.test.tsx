@@ -7,6 +7,7 @@ import { SecurityCenter } from "../auth/security-center";
 import { AdminAssignments } from "./admin-assignments";
 import { AdminSecurityAlerts } from "./admin-events";
 import { AdminUsers } from "./admin-users";
+import { AdminUserDetail } from "./admin-user-detail";
 
 const navigation = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn(), pathname: "/dashboard/student" }));
 vi.mock("next/navigation", () => ({
@@ -271,5 +272,56 @@ describe("EduFlow CRM interface", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Email delivery is temporarily unavailable");
     expect(screen.getByRole("alert")).toHaveTextContent("No counsellor account was created");
     expect(screen.getByRole("alert")).not.toHaveTextContent("Provider-specific");
+  });
+
+  it("shows safe user details and keeps destructive actions disabled until confirmed", async () => {
+    const close = vi.fn();
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/auth/csrf")) return response({ csrfToken: "test-csrf" });
+      return response({
+        user: { id: "u1", fullName: "Pending Counsellor", email: "pending@example.test", role: "COUNSELLOR", status: "ACTIVE", emailVerified: false, mfaEnabled: false, createdAt: "2026-07-24T10:00:00.000Z", passwordExpired: false },
+        summary: { activeSessions: 0, documentCount: 0, caseload: 0, assignment: null, application: null },
+        recentEvents: [{ id: "e1", event: "COUNSELLOR_CREATED", createdAt: "2026-07-24T10:00:00.000Z" }],
+      });
+    }));
+    render(<AdminUserDetail userId="u1" onClose={close} onChanged={vi.fn(async () => undefined)} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Loading user details");
+    expect(await screen.findByText("Pending Counsellor")).toBeInTheDocument();
+    expect(screen.getByText("COUNSELLOR CREATED")).toBeInTheDocument();
+    const cancel = screen.getByRole("button", { name: "Cancel pending invitation" });
+    expect(cancel).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Mandatory audit reason"), { target: { value: "Valid cancellation reason" } });
+    fireEvent.change(screen.getByLabelText("Typed confirmation, when required"), { target: { value: "CANCEL INVITATION" } });
+    expect(cancel).toBeEnabled();
+    fireEvent.click(cancel);
+    await waitFor(() => expect(close).toHaveBeenCalled());
+  });
+
+  it("opens user details from the directory and refreshes after a safe name correction", async () => {
+    let detailLoads = 0;
+    const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) return response({ user: { role: "ADMIN", status: "ACTIVE", mfaEnabled: true }, passwordExpired: false, mfaComplete: true });
+      if (url.includes("/auth/csrf")) return response({ csrfToken: "test-csrf" });
+      if (url.endsWith("/admin/users/u1") && !options?.method) {
+        detailLoads += 1;
+        return response({ user: { id: "u1", fullName: detailLoads > 1 ? "Corrected Name" : "Original Name", email: "user@example.test", role: "STUDENT", status: "ACTIVE", emailVerified: true, mfaEnabled: false, createdAt: "2026-07-24T10:00:00.000Z", passwordExpired: false }, summary: { activeSessions: 0, documentCount: 0, caseload: 0 }, recentEvents: [] });
+      }
+      if (url.includes("/profile")) {
+        expect(options?.body).toBe(JSON.stringify({ fullName: "Corrected Name", reason: "Correcting legal account name" }));
+        return response({ user: { id: "u1", fullName: "Corrected Name" } });
+      }
+      return response({ users: [{ _id: "u1", fullName: "Original Name", email: "user@example.test", role: "STUDENT", status: "ACTIVE", emailVerifiedAt: "2026-07-24", mfaEnabled: false }] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminUsers />);
+    fireEvent.click(await screen.findByRole("button", { name: "View details" }));
+    expect(await screen.findByRole("dialog", { name: "User details" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Full name"), { target: { value: "Corrected Name" } });
+    fireEvent.change(screen.getByLabelText("Audit reason"), { target: { value: "Correcting legal account name" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save name correction" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Account updated");
+    expect(detailLoads).toBeGreaterThanOrEqual(2);
   });
 });
