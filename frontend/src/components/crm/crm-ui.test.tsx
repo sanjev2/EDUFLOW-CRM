@@ -5,9 +5,9 @@ import { StudentProfileForm } from "./student-profile-form";
 import { StudentApplication } from "./student-application";
 import { SecurityCenter } from "../auth/security-center";
 
-const navigation = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
+const navigation = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn(), pathname: "/dashboard/student" }));
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/dashboard/student",
+  usePathname: () => navigation.pathname,
   useRouter: () => navigation,
 }));
 
@@ -17,6 +17,7 @@ function response(body: unknown) {
 
 beforeEach(() => {
   navigation.replace.mockReset();
+  navigation.pathname = "/dashboard/student";
   vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) =>
     response(String(input).includes("/auth/me")
       ? { user: { role: "STUDENT", status: "ACTIVE", mfaEnabled: false }, passwordExpired: false, mfaComplete: true }
@@ -30,9 +31,13 @@ describe("EduFlow CRM interface", () => {
     expect(screen.queryByRole("link", { name: "Audit Logs" })).not.toBeInTheDocument();
   });
   it("renders role-specific administrator navigation", () => {
+    navigation.pathname = "/dashboard/admin";
     render(<AppShell role="ADMIN" title="Administrator dashboard"><p>Content</p></AppShell>);
     expect(screen.getAllByRole("link", { name: "Assignments" }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole("link", { name: "Security Alerts" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("link", { name: "Dashboard" })[0]).toHaveAttribute("aria-current", "page");
+    expect(screen.queryByRole("button", { name: "Notifications" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /collapse sidebar/i })).not.toBeInTheDocument();
   });
   it("redirects unauthenticated and wrong-role dashboard entry", async () => {
     vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) =>
@@ -64,6 +69,8 @@ describe("EduFlow CRM interface", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Security settings" })).toBeInTheDocument());
     expect(navigation.replace).not.toHaveBeenCalledWith("/access-denied");
     expect(screen.getAllByRole("link", { name: "Audit Logs" }).length).toBeGreaterThan(0);
+    expect(screen.getByText("Enabled")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Set up MFA" })).not.toBeInTheDocument();
   });
   it("opens and closes the accessible mobile drawer", () => {
     render(<AppShell role="COUNSELLOR" title="Counsellor dashboard"><p>Content</p></AppShell>);

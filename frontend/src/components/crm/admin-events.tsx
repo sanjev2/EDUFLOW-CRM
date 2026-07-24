@@ -1,15 +1,27 @@
 "use client";
 import { useEffect, useState } from "react";
+import { Activity, AlertTriangle } from "lucide-react";
 import { AppShell } from "../app-shell";
 import { Badge, EmptyState, Panel } from "../dashboard-ui";
 import { api } from "@/lib/api";
+
 export function AdminAuditLogs() {
-  const [logs, setLogs] = useState<{ _id: string; event: string; actorId?: string; subjectId?: string; createdAt: string }[]>([]); const [event, setEvent] = useState("");
-  useEffect(() => { void api<{ logs: typeof logs }>(`/api/v1/admin/audit-logs?limit=50${event ? `&event=${encodeURIComponent(event)}` : ""}`).then((result) => setLogs(result.logs)); }, [event]);
-  return <AppShell role="ADMIN" title="Audit logs" subtitle="Append-oriented evidence of meaningful security and CRM changes."><Panel title="Recent events"><label className="mb-4 grid max-w-md gap-1 text-sm font-semibold">Exact event filter<input value={event} onChange={(e) => setEvent(e.target.value)} className="min-h-11 rounded-lg border px-3" /></label>{logs.length ? <ul className="space-y-2">{logs.map((log) => <li key={log._id} className="grid gap-2 rounded-lg border p-4 text-sm sm:grid-cols-[1fr_auto]"><div><p className="font-bold">{log.event.replaceAll("_", " ")}</p><p className="text-[var(--muted)]">Actor {log.actorId ?? "system"} · Subject {log.subjectId ?? "none"}</p></div><time>{new Date(log.createdAt).toLocaleString()}</time></li>)}</ul> : <EmptyState title="No audit events" description="No events match the current filter." />}</Panel></AppShell>;
+  const [logs, setLogs] = useState<{ _id: string; event: string; actorId?: string; subjectId?: string; createdAt: string }[]>([]);
+  const [event, setEvent] = useState(""); const [error, setError] = useState(""); const [loading, setLoading] = useState(true);
+  useEffect(() => { setLoading(true); setError(""); void api<{ logs: typeof logs }>(`/api/v1/admin/audit-logs?limit=50${event ? `&event=${encodeURIComponent(event)}` : ""}`).then((result) => setLogs(result.logs)).catch((reason: Error) => setError(reason.message)).finally(() => setLoading(false)); }, [event]);
+  return <AppShell role="ADMIN" title="Audit logs" subtitle="Review append-only evidence of meaningful account, security and CRM events."><Panel title="Activity history">
+    <div className="mb-5 flex flex-wrap items-end justify-between gap-3"><label className="grid w-full max-w-md gap-1.5 text-sm font-semibold">Filter by exact event<input value={event} onChange={(e) => setEvent(e.target.value)} className="min-h-11 rounded-xl border border-[var(--border)] px-3" placeholder="For example: LOGIN_SUCCESS" /></label><p className="text-sm text-[var(--muted)]">{logs.length} events shown</p></div>
+    {error && <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}
+    {loading ? <p role="status" className="py-5 text-sm text-[var(--muted)]">Loading audit activity…</p> : logs.length ? <ol className="relative ml-4 border-l border-[var(--border)]">{logs.map((log) => <li key={log._id} className="relative pb-5 pl-7 last:pb-0"><span className="absolute -left-[17px] top-0 grid h-8 w-8 place-items-center rounded-full border-4 border-white bg-blue-50 text-[var(--navy)]"><Activity aria-hidden size={14} /></span><article className="rounded-xl border border-[var(--border)] bg-white p-4 hover:border-[var(--light-blue)]"><div className="flex flex-wrap items-start justify-between gap-2"><p className="font-extrabold text-[var(--text)]">{log.event.replaceAll("_", " ")}</p><time className="text-xs text-[var(--muted)]">{new Date(log.createdAt).toLocaleString()}</time></div><p className="mt-2 break-all text-xs text-[var(--muted)]">Actor: {log.actorId ?? "System"} · Subject: {log.subjectId ?? "Not applicable"}</p></article></li>)}</ol> : <EmptyState title="No audit events" description="No events match the current exact filter." />}
+  </Panel></AppShell>;
 }
+
 export function AdminSecurityAlerts() {
   const [alerts, setAlerts] = useState<{ _id: string; type: string; severity: "LOW"|"MEDIUM"|"HIGH"; createdAt: string }[]>([]);
-  useEffect(() => { void api<{ alerts: typeof alerts }>("/api/v1/admin/security-alerts?limit=50").then((result) => setAlerts(result.alerts)); }, []);
-  return <AppShell role="ADMIN" title="Security alerts" subtitle="Read-only operational and authentication alerts."><Panel title="Alert feed">{alerts.length ? <ul className="space-y-3">{alerts.map((alert) => <li key={alert._id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4"><div><p className="font-bold">{alert.type.replaceAll("_", " ")}</p><time className="text-sm text-[var(--muted)]">{new Date(alert.createdAt).toLocaleString()}</time></div><Badge tone={alert.severity === "HIGH" ? "danger" : alert.severity === "MEDIUM" ? "warning" : "info"}>{alert.severity}</Badge></li>)}</ul> : <EmptyState title="No security alerts" description="New safe alert context will appear here." />}</Panel></AppShell>;
+  const [error, setError] = useState(""); const [loading, setLoading] = useState(true);
+  useEffect(() => { void api<{ alerts: typeof alerts }>("/api/v1/admin/security-alerts?limit=50").then((result) => setAlerts(result.alerts)).catch((reason: Error) => setError(reason.message)).finally(() => setLoading(false)); }, []);
+  return <AppShell role="ADMIN" title="Security alerts" subtitle="Review recorded authentication and operational security signals."><Panel title="Alert feed">
+    {error && <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}
+    {loading ? <p role="status" className="py-5 text-sm text-[var(--muted)]">Loading security alerts…</p> : alerts.length ? <ul className="grid gap-3">{alerts.map((alert) => <li key={alert._id} className="grid grid-cols-[42px_1fr_auto] items-center gap-3 rounded-xl border border-[var(--border)] p-4"><span className="grid h-10 w-10 place-items-center rounded-xl bg-amber-50 text-amber-700"><AlertTriangle aria-hidden size={19} /></span><div className="min-w-0"><p className="truncate font-extrabold">{alert.type.replaceAll("_", " ")}</p><time className="text-xs text-[var(--muted)]">{new Date(alert.createdAt).toLocaleString()}</time></div><Badge tone={alert.severity === "HIGH" ? "danger" : alert.severity === "MEDIUM" ? "warning" : "info"}>{alert.severity}</Badge></li>)}</ul> : <EmptyState title="No security alerts" description="No security alerts are currently recorded." />}
+  </Panel></AppShell>;
 }
