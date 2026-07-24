@@ -78,7 +78,10 @@ async function applicationPayload(studentId: unknown) {
   ]);
   return { application, history, assignment };
 }
-crmRouter.get("/applications/current", requireRole("STUDENT"), async (req, res) => res.json(await applicationPayload(req.auth!.user._id)));
+crmRouter.get("/applications/current", requireRole("STUDENT"), async (req, res) => {
+  res.set("Cache-Control", "no-store, private");
+  res.json(await applicationPayload(req.auth!.user._id));
+});
 crmRouter.post("/applications/current/submit", requireRole("STUDENT"), submissionRateLimit, async (req, res) => {
   strictBody(z.object({ confirm: z.literal(true) }).strict(), req.body);
   const idempotencyKey = req.get("idempotency-key");
@@ -144,7 +147,7 @@ crmRouter.post("/applications/:id/correct-stage", requireMfa, requireRole("ADMIN
 
 crmRouter.get("/assignments/counsellors", requireRole("ADMIN"), async (_req, res) => {
   const counsellors = await User.aggregate([
-    { $match: { role: "COUNSELLOR", status: "ACTIVE" } },
+    { $match: { role: "COUNSELLOR", status: "ACTIVE", emailVerifiedAt: { $type: "date" } } },
     { $lookup: { from: "counsellorassignments", let: { id: "$_id" }, pipeline: [{ $match: { $expr: { $and: [{ $eq: ["$counsellorId", "$$id"] }, { $eq: ["$active", true] }] } } }, { $count: "count" }], as: "workload" } },
     { $project: { fullName: 1, email: 1, assignmentCount: { $ifNull: [{ $first: "$workload.count" }, 0] } } },
     { $sort: { assignmentCount: 1, email: 1 } },

@@ -135,6 +135,30 @@ describe("EduFlow CRM interface", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Create your first enquiry" })).toBeInTheDocument());
     expect(screen.getByRole("button", { name: "Create enquiry" })).toBeInTheDocument();
   });
+  it("sends the enquiry mutation, bypasses stale GET caching and shows unassigned guidance", async () => {
+    let created = false;
+    const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/auth/csrf")) return response({ csrfToken: "test-csrf" });
+      if (url.includes("/applications/current")) {
+        expect(options?.cache).toBe("no-store");
+        return response(created
+          ? { application: { _id: "a1", stage: "ENQUIRY" }, history: [], assignment: null }
+          : { application: null, history: [], assignment: null });
+      }
+      if (url.endsWith("/applications") && options?.method === "POST") {
+        created = true;
+        return response({ application: { _id: "a1", stage: "ENQUIRY" }, assignment: null });
+      }
+      return response({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<StudentApplication />);
+    fireEvent.click(await screen.findByRole("button", { name: "Create enquiry" }));
+    expect(await screen.findByText("No active counsellor is currently available. Your enquiry is recorded and awaiting assignment.")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([input, options]) =>
+      String(input).endsWith("/applications") && (options as RequestInit | undefined)?.method === "POST")).toBe(true);
+  });
   it("renders an application timeline without exposing internal notes", async () => {
     vi.stubGlobal("fetch", vi.fn(() => response({ application: { _id: "a1", stage: "COUNSELLING" }, assignment: null, history: [{ _id: "h1", newStage: "ENQUIRY", reason: "Student created enquiry", createdAt: new Date().toISOString() }] })));
     render(<StudentApplication />);

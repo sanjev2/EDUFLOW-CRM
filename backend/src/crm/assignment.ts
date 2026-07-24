@@ -8,7 +8,7 @@ export async function assignLeastLoaded(studentId: unknown) {
   const existing = await CounsellorAssignment.findOne({ studentId, active: true });
   if (existing) return existing;
   const counsellors = await User.aggregate([
-    { $match: { role: "COUNSELLOR", status: "ACTIVE" } },
+    { $match: { role: "COUNSELLOR", status: "ACTIVE", emailVerifiedAt: { $type: "date" } } },
     { $lookup: { from: "counsellorassignments", let: { counsellor: "$_id" }, pipeline: [
       { $match: { $expr: { $and: [{ $eq: ["$counsellorId", "$$counsellor"] }, { $eq: ["$active", true] }] } } },
       { $count: "count" },
@@ -44,7 +44,7 @@ export async function assignLeastLoaded(studentId: unknown) {
 }
 
 export async function validateCounsellor(counsellorId: string) {
-  const counsellor = await User.findOne({ _id: counsellorId, role: "COUNSELLOR", status: "ACTIVE" });
+  const counsellor = await User.findOne({ _id: counsellorId, role: "COUNSELLOR", status: "ACTIVE", emailVerifiedAt: { $exists: true } });
   if (!counsellor) throw new ApiError(400, "INVALID_COUNSELLOR", "An active counsellor is required");
   return counsellor;
 }

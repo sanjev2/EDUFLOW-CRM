@@ -20,7 +20,7 @@ export function StudentApplication() {
   const submissionKey = useRef("");
 
   async function load() {
-    setData(await api<Data>("/api/v1/crm/applications/current"));
+    setData(await api<Data>("/api/v1/crm/applications/current", { cache: "no-store" }));
   }
   useEffect(() => { void load().catch((reason: Error) => setError(reason.message)); }, []);
 
@@ -113,7 +113,7 @@ export function StudentApplication() {
             </div>
           </Panel>
           <Panel title="Assigned counsellor">
-            {data.assignment ? <div><p className="font-bold">{data.assignment.counsellorId.fullName}</p><p className="text-sm text-[var(--muted)]">{data.assignment.counsellorId.email}</p></div> : <EmptyState title="Currently unassigned" description="Your enquiry remains active. An administrator has been alerted to arrange support." />}
+            {data.assignment ? <div><p className="font-bold">{data.assignment.counsellorId.fullName}</p><p className="text-sm text-[var(--muted)]">{data.assignment.counsellorId.email}</p></div> : <EmptyState title="Currently unassigned" description="No active counsellor is currently available. Your enquiry is recorded and awaiting assignment." />}
           </Panel>
           <Panel title="Stage history">
             {data.history.length ? <ol className="relative space-y-4 border-l-2 border-blue-100 pl-5">{data.history.map((item) => <li key={item._id}><p className="font-semibold">{item.newStage.replaceAll("_", " ")}</p><p className="text-sm text-[var(--muted)]">{item.reason}</p><time className="text-xs text-[var(--muted)]">{new Date(item.createdAt).toLocaleString()}</time></li>)}</ol> : <EmptyState title="No history yet" description="Application changes will appear here." />}

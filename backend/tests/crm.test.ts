@@ -14,6 +14,7 @@ import { Task } from "../src/models/Task.js";
 import { IpAccessRule, SecurityAlert } from "../src/models/Security.js";
 import { hashPassword } from "../src/security/password.js";
 import { randomToken, sha256 } from "../src/security/crypto.js";
+import { assignLeastLoaded } from "../src/crm/assignment.js";
 
 beforeAll(async () => { expect(process.env.MONGODB_URI).toMatch(/eduflow_crm_test$/); if (!mongoose.connection.readyState) await mongoose.connect(process.env.MONGODB_URI!); });
 beforeEach(async () => { await mongoose.connection.db!.dropDatabase(); await Promise.all(Object.values(mongoose.models).map((model) => model.syncIndexes())); });
@@ -76,6 +77,30 @@ describe("enquiry, assignment and state history", () => {
     const result = await mutate("post", "/api/v1/crm/applications", student).send({}).expect(201);
     expect(result.body.assignment).toBeNull();
     expect(await SecurityAlert.countDocuments({ type: "UNASSIGNED_ENQUIRY" })).toBe(1);
+  });
+  it("assigns only an active verified counsellor and excludes pending, suspended and archived accounts", async () => {
+    const student = await identity("STUDENT");
+    const pending = await identity("COUNSELLOR", "a-pending");
+    await User.updateOne({ _id: pending.user._id }, { $unset: { emailVerifiedAt: 1 } });
+    const suspended = await identity("COUNSELLOR", "b-suspended");
+    await User.updateOne({ _id: suspended.user._id }, { status: "SUSPENDED" });
+    const archived = await identity("COUNSELLOR", "c-archived");
+    await User.updateOne({ _id: archived.user._id }, { status: "ARCHIVED" });
+    const eligible = await identity("COUNSELLOR", "d-eligible");
+    const result = await mutate("post", "/api/v1/crm/applications", student).send({}).expect(201);
+    expect(String(result.body.assignment.counsellorId)).toBe(String(eligible.user._id));
+    expect(await CounsellorAssignment.countDocuments({ studentId: student.user._id })).toBe(1);
+    expect(await Task.countDocuments({ studentId: student.user._id })).toBe(1);
+  });
+  it("keeps concurrent automatic assignment and follow-up creation idempotent", async () => {
+    const student = await identity("STUDENT");
+    await identity("COUNSELLOR");
+    await Promise.all([
+      assignLeastLoaded(student.user._id),
+      assignLeastLoaded(student.user._id),
+    ]);
+    expect(await CounsellorAssignment.countDocuments({ studentId: student.user._id, active: true })).toBe(1);
+    expect(await Task.countDocuments({ automationKey: `enquiry-follow-up:${String(student.user._id)}` })).toBe(1);
   });
   it("enforces assigned forward transitions and returns 409 for invalid transitions", async () => {
     const student = await identity("STUDENT"); const counsellor = await identity("COUNSELLOR");
