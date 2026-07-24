@@ -1,0 +1,106 @@
+name: eduflow
+
+services:
+  mongo:
+    image: mongo:8.0.12-noble
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGODB_ROOT_USERNAME:?Set MONGODB_ROOT_USERNAME in the local .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_ROOT_PASSWORD:?Set MONGODB_ROOT_PASSWORD in the local .env}
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --username \"$$MONGO_INITDB_ROOT_USERNAME\" --password \"$$MONGO_INITDB_ROOT_PASSWORD\" --authenticationDatabase admin --eval \"quit(db.adminCommand('ping').ok ? 0 : 2)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    mem_limit: 768m
+    cpus: 1.0
+    stop_grace_period: 30s
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      BACKEND_PORT: 5001
+      FRONTEND_URL: http://localhost:3100
+      PUBLIC_APP_URL: http://localhost:3100
+      MONGODB_URI: mongodb://${MONGODB_ROOT_USERNAME}:${MONGODB_ROOT_PASSWORD}@mongo:27017/eduflow_crm?authSource=admin
+      UPLOAD_ROOT: /app/uploads
+      EMAIL_DELIVERY_MODE: smtp
+    ports:
+      - "127.0.0.1:5001:5001"
+    volumes:
+      - private_uploads:/app/uploads
+    networks:
+      - web
+      - data
+    depends_on:
+      mongo:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    mem_limit: 512m
+    cpus: 1.0
+    stop_grace_period: 20s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:5001/api/v1
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      PORT: 3100
+      HOSTNAME: 0.0.0.0
+    ports:
+      - "127.0.0.1:3100:3100"
+    networks:
+      - web
+    depends_on:
+      backend:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /app/frontend/.next/cache:size=64m,uid=100,mode=0700
+    mem_limit: 384m
+    cpus: 0.75
+    stop_grace_period: 20s
+
+networks:
+  web:
+  data:
+    internal: true
+
+volumes:
+  mongodb_data:
+  mongodb_config:
+  private_uploads:
