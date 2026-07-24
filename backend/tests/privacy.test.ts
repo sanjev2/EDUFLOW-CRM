@@ -60,3 +60,55 @@ describe("privacy data export", () => {
     await request(app).get("/api/v1/privacy/export").set("Cookie", suspended.cookie).expect(401);
   });
 });
+
+describe("privacy profile import", () => {
+  const importBody = { schemaVersion: "1.0", profile: { phone: "9800000000", city: "Kathmandu", country: "Nepal", englishTestType: "NONE" } };
+  const post = (path: string, auth: Awaited<ReturnType<typeof identity>>) =>
+    request(app).post(path).set("Cookie", auth.cookie).set("Origin", "http://localhost:3100").set("x-csrf-token", auth.csrf).set("Content-Type", "application/json");
+
+  it("previews without mutation and imports only after explicit confirmation", async () => {
+    const student = await identity("STUDENT");
+    const preview = await post("/api/v1/privacy/import/preview", student).send(importBody).expect(200);
+    expect(preview.body.confirmationRequired).toBe(true);
+    expect(preview.body.fields).toEqual(expect.arrayContaining(["phone", "city"]));
+    expect(await StudentProfile.countDocuments()).toBe(0);
+    await post("/api/v1/privacy/import", student).send(importBody).expect(400);
+    const imported = await post("/api/v1/privacy/import", student).send({ ...importBody, confirm: true }).expect(200);
+    expect(imported.body.message).toMatch(/imported successfully/i);
+    expect((await StudentProfile.findOne({ userId: student.user._id }))!.city).toBe("Kathmandu");
+    expect(await AuditLog.countDocuments({ event: "PRIVACY_PROFILE_IMPORT", actorId: student.user._id })).toBe(1);
+  });
+
+  it.each([
+    ["role", { ...importBody, profile: { ...importBody.profile, role: "ADMIN" } }],
+    ["ownership", { ...importBody, profile: { ...importBody.profile, userId: new mongoose.Types.ObjectId().toString() } }],
+    ["password", { ...importBody, profile: { ...importBody.profile, password: "unsafe" } }],
+    ["prototype", JSON.parse('{"schemaVersion":"1.0","profile":{"country":"Nepal","englishTestType":"NONE","prototype":{"polluted":true}}}')],
+    ["constructor", JSON.parse('{"schemaVersion":"1.0","profile":{"country":"Nepal","englishTestType":"NONE","constructor":{"prototype":{"polluted":true}}}}')],
+    ["__proto__", JSON.parse('{"schemaVersion":"1.0","profile":{"country":"Nepal","englishTestType":"NONE","__proto__":{"polluted":true}}}')],
+  ])("rejects prohibited %s input without partial mutation", async (_label, body) => {
+    const student = await identity("STUDENT");
+    await StudentProfile.create({ userId: student.user._id, phone: "9711111111", country: "Nepal", englishTestType: "NONE" });
+    await post("/api/v1/privacy/import", student).send({ ...(body as object), confirm: true }).expect(400);
+    expect((await StudentProfile.findOne({ userId: student.user._id }))!.phone).toBe("9711111111");
+    expect(await AuditLog.countDocuments({ event: "PRIVACY_PROFILE_IMPORT_REJECTED", actorId: student.user._id })).toBe(1);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("enforces JSON, CSRF, role and size limits", async () => {
+    const student = await identity("STUDENT"); const counsellor = await identity("COUNSELLOR");
+    await request(app).post("/api/v1/privacy/import/preview").set("Cookie", student.cookie).set("x-csrf-token", student.csrf).set("Content-Type", "text/plain").send("profile").expect(415);
+    await request(app).post("/api/v1/privacy/import").set("Cookie", student.cookie).set("x-csrf-token", student.csrf).set("Content-Type", "text/plain").send("profile").expect(415);
+    await request(app).post("/api/v1/privacy/import").set("Cookie", student.cookie).set("Content-Type", "application/json").send({ ...importBody, confirm: true }).expect(403);
+    await post("/api/v1/privacy/import", counsellor).send({ ...importBody, confirm: true }).expect(403);
+    await post("/api/v1/privacy/import/preview", student).send({ schemaVersion: "1.0", profile: { country: "x".repeat(101 * 1024) } }).expect(413);
+  });
+
+  it("denies suspended users and rate limits repeated previews", async () => {
+    const suspended = await identity("STUDENT", "SUSPENDED");
+    await post("/api/v1/privacy/import", suspended).send({ ...importBody, confirm: true }).expect(401);
+    const student = await identity("STUDENT");
+    for (let attempt = 0; attempt < 10; attempt += 1) await post("/api/v1/privacy/import/preview", student).send(importBody).expect(200);
+    await post("/api/v1/privacy/import/preview", student).send(importBody).expect(429);
+  });
+});
