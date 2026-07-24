@@ -1,6 +1,6 @@
 import pino from "pino";
 
-export const logger = pino({
+export const loggerOptions: pino.LoggerOptions = {
   level: process.env.LOG_LEVEL ?? "info",
   redact: {
     paths: [
@@ -8,6 +8,16 @@ export const logger = pino({
       "req.headers.cookie",
       "req.headers.x-csrf-token",
       "res.headers.set-cookie",
+      "smtpPassword",
+      "smtpUser",
+      "SMTP_PASSWORD",
+      "SMTP_USER",
+      "verificationToken",
+      "resetToken",
+      "message.text",
+      "message.html",
+      "message.link",
+      "message.url",
       "req.body.password",
       "req.body.passwordConfirmation",
       "req.body.currentPassword",
@@ -21,4 +31,5 @@ export const logger = pino({
     ],
     censor: "[REDACTED]",
   },
-});
+};
+export const logger = pino(loggerOptions);

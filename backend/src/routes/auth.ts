@@ -8,7 +8,7 @@ import { strictBody, email, strongPassword } from "../security/validation.js";
 import { hashPassword, passwordWasReused, recordPassword, verifyPassword } from "../security/password.js";
 import { keyedHash, randomToken, sha256 } from "../security/crypto.js";
 import { audit } from "../security/audit.js";
-import { deliverDevelopmentLink, developmentOutbox } from "../security/outbox.js";
+import { sendEmailVerification, sendPasswordReset } from "../email/delivery.js";
 import { ApiError } from "../errors.js";
 import { clearSessionCookie, createSession, rotateSession } from "../security/session.js";
 import { requireAuthentication, requireFreshAuthentication } from "../middleware/auth.js";
@@ -16,6 +16,8 @@ import { Session } from "../models/Session.js";
 import { config } from "../config.js";
 
 export const authRouter = Router();
+const genericVerificationMessage = "If the account is eligible, verification instructions will be sent.";
+const genericResetMessage = "If the account exists, password reset instructions will be sent.";
 const registerSchema = z.object({
   fullName: z.string().trim().min(2).max(100),
   email,
@@ -35,13 +37,43 @@ authRouter.post("/register", async (req, res) => {
     });
     await recordPassword(user._id, passwordHash);
     const token = randomToken();
-    await EmailVerificationToken.create({ userId: user._id, tokenHash: sha256(token), expiresAt: new Date(Date.now() + 24 * 3600000) });
-    deliverDevelopmentLink({ type: "VERIFY_EMAIL", email: user.email, link: `${config.FRONTEND_URL}/verify-email?token=${token}`, createdAt: now.toISOString() });
+    const verification = await EmailVerificationToken.create({ userId: user._id, tokenHash: sha256(token), expiresAt: new Date(Date.now() + 24 * 3600000) });
+    try {
+      await sendEmailVerification({ email: user.email, fullName: user.fullName, token });
+    } catch {
+      verification.usedAt = new Date(); await verification.save();
+      await SecurityAlert.create({ userId: user._id, type: "EMAIL_DELIVERY_FAILURE", severity: "MEDIUM", metadata: { purpose: "verification" } });
+      await audit(req, "EMAIL_DELIVERY_FAILURE", { subjectId: user._id, metadata: { purpose: "verification" } });
+    }
     await audit(req, "REGISTRATION", { subjectId: user._id });
   } catch (error: unknown) {
     if (!(typeof error === "object" && error !== null && "code" in error && error.code === 11000)) throw error;
   }
-  res.status(202).json({ message: "If registration can be completed, verification instructions are available." });
+  res.status(202).json({ message: genericVerificationMessage });
+});
+
+authRouter.post("/resend-verification", async (req, res) => {
+  const input = strictBody(z.object({ email }).strict(), req.body);
+  const emailHash = keyedHash(input.email); const ipHash = keyedHash(req.ip ?? "");
+  const since = new Date(Date.now() - 15 * 60000);
+  const attempts = await LoginAttempt.countDocuments({ $or: [{ emailHash }, { ipHash }], outcome: "VERIFICATION_RESEND", createdAt: { $gte: since } });
+  if (attempts >= 5) throw new ApiError(429, "TOO_MANY_ATTEMPTS", "Too many requests. Try again later.");
+  await LoginAttempt.create({ emailHash, ipHash, outcome: "VERIFICATION_RESEND" });
+  const user = await User.findOne({ email: input.email, emailVerifiedAt: { $exists: false }, status: "ACTIVE" });
+  if (user) {
+    await EmailVerificationToken.updateMany({ userId: user._id, usedAt: { $exists: false } }, { usedAt: new Date() });
+    const token = randomToken();
+    const record = await EmailVerificationToken.create({ userId: user._id, tokenHash: sha256(token), expiresAt: new Date(Date.now() + 24 * 3600000) });
+    try {
+      await sendEmailVerification({ email: user.email, fullName: user.fullName, token });
+      await audit(req, "EMAIL_VERIFICATION_RESEND", { subjectId: user._id });
+    } catch {
+      record.usedAt = new Date(); await record.save();
+      await SecurityAlert.create({ userId: user._id, type: "EMAIL_DELIVERY_FAILURE", severity: "MEDIUM", metadata: { purpose: "verification" } });
+      await audit(req, "EMAIL_DELIVERY_FAILURE", { subjectId: user._id, metadata: { purpose: "verification" } });
+    }
+  }
+  res.status(202).json({ message: genericVerificationMessage });
 });
 
 authRouter.post("/verify-email", async (req, res) => {
@@ -144,14 +176,25 @@ authRouter.post("/logout", requireAuthentication, async (req, res) => {
 
 authRouter.post("/forgot-password", async (req, res) => {
   const input = strictBody(z.object({ email }).strict(), req.body);
-  const user = await User.findOne({ email: input.email });
+  const emailHash = keyedHash(input.email); const ipHash = keyedHash(req.ip ?? "");
+  const since = new Date(Date.now() - 15 * 60000);
+  const attempts = await LoginAttempt.countDocuments({ $or: [{ emailHash }, { ipHash }], outcome: "PASSWORD_RESET_REQUEST", createdAt: { $gte: since } });
+  if (attempts >= 5) throw new ApiError(429, "TOO_MANY_ATTEMPTS", "Too many requests. Try again later.");
+  await LoginAttempt.create({ emailHash, ipHash, outcome: "PASSWORD_RESET_REQUEST" });
+  const user = await User.findOne({ email: input.email, status: "ACTIVE", emailVerifiedAt: { $exists: true } });
   if (user) {
     await PasswordResetToken.updateMany({ userId: user._id, usedAt: { $exists: false } }, { usedAt: new Date() });
     const token = randomToken();
-    await PasswordResetToken.create({ userId: user._id, tokenHash: sha256(token), expiresAt: new Date(Date.now() + 30 * 60000) });
-    deliverDevelopmentLink({ type: "RESET_PASSWORD", email: user.email, link: `${config.FRONTEND_URL}/reset-password?token=${token}`, createdAt: new Date().toISOString() });
+    const record = await PasswordResetToken.create({ userId: user._id, tokenHash: sha256(token), expiresAt: new Date(Date.now() + 30 * 60000) });
+    try {
+      await sendPasswordReset({ email: user.email, fullName: user.fullName, token });
+    } catch {
+      record.usedAt = new Date(); await record.save();
+      await SecurityAlert.create({ userId: user._id, type: "EMAIL_DELIVERY_FAILURE", severity: "MEDIUM", metadata: { purpose: "password-reset" } });
+      await audit(req, "EMAIL_DELIVERY_FAILURE", { subjectId: user._id, metadata: { purpose: "password-reset" } });
+    }
   }
-  res.status(202).json({ message: "If the account exists, password reset instructions are available." });
+  res.status(202).json({ message: genericResetMessage });
 });
 
 authRouter.post("/reset-password", async (req, res) => {
@@ -195,8 +238,6 @@ authRouter.post("/change-password", requireAuthentication, requireFreshAuthentic
   await audit(req, "PASSWORD_CHANGE", { actorId: user._id });
   res.json({ message: "Password changed successfully.", csrfToken: csrf });
 });
-
-if (config.NODE_ENV !== "production") authRouter.get("/development/outbox", (_req, res) => res.json({ messages: developmentOutbox() }));
 
 export function safeUser(user: { _id: unknown; fullName: string; email: string; role: string; emailVerifiedAt?: Date; status: string; mfaEnabled: boolean; passwordExpiresAt: Date }) {
   return { id: String(user._id), fullName: user.fullName, email: user.email, role: user.role, emailVerified: Boolean(user.emailVerifiedAt), status: user.status, mfaEnabled: user.mfaEnabled, passwordExpiresAt: user.passwordExpiresAt };

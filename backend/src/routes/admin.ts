@@ -7,7 +7,7 @@ import { hashPassword, recordPassword } from "../security/password.js";
 import { config } from "../config.js";
 import { EmailVerificationToken } from "../models/Tokens.js";
 import { randomToken, sha256 } from "../security/crypto.js";
-import { deliverDevelopmentLink } from "../security/outbox.js";
+import { sendEmailVerification } from "../email/delivery.js";
 import { audit } from "../security/audit.js";
 import { ApiError } from "../errors.js";
 import { Session } from "../models/Session.js";
@@ -39,8 +39,15 @@ adminRouter.post("/users/counsellors", async (req, res) => {
   }
   await recordPassword(user._id, passwordHash);
   const token = randomToken();
-  await EmailVerificationToken.create({ userId: user._id, tokenHash: sha256(token), expiresAt: new Date(Date.now() + 24 * 3600000) });
-  deliverDevelopmentLink({ type: "VERIFY_EMAIL", email: user.email, link: `${config.FRONTEND_URL}/verify-email?token=${token}`, createdAt: now.toISOString() });
+  const verification = await EmailVerificationToken.create({ userId: user._id, tokenHash: sha256(token), expiresAt: new Date(Date.now() + 24 * 3600000) });
+  try {
+    await sendEmailVerification({ email: user.email, fullName: user.fullName, token });
+  } catch {
+    verification.usedAt = new Date(); await verification.save();
+    await SecurityAlert.create({ userId: user._id, type: "EMAIL_DELIVERY_FAILURE", severity: "MEDIUM", metadata: { purpose: "verification" } });
+    await audit(req, "EMAIL_DELIVERY_FAILURE", { actorId: req.auth!.user._id, subjectId: user._id, metadata: { purpose: "verification" } });
+    throw new ApiError(503, "EMAIL_DELIVERY_UNAVAILABLE", "The account was created, but verification email delivery is temporarily unavailable");
+  }
   await audit(req, "COUNSELLOR_CREATED", { actorId: req.auth!.user._id, subjectId: user._id, metadata: { reason: input.reason } });
   res.status(201).json({ user: { id: String(user._id), fullName: user.fullName, email: user.email, role: user.role, status: user.status } });
 });
