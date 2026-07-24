@@ -31,7 +31,6 @@ export function SecurityCenter() {
   }
   useEffect(() => { void refreshCsrf().then(() => Promise.all([api<{ sessions: Session[] }>("/api/v1/sessions"), api<Identity>("/api/v1/auth/me")])).then(([result, me]) => { setSessions(result.sessions); setRole(me.user.role); setMfaEnabled(me.user.mfaEnabled); }).catch((reason: Error) => setError(reason.message)); }, []);
   async function revoke(id: string) { setError(""); try { await api(`/api/v1/sessions/${id}`, { method: "DELETE" }); await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Session could not be revoked."); } }
-  async function logout() { await api("/api/v1/auth/logout", { method: "POST", body: "{}" }); router.replace("/login"); }
   async function changePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError(""); setMessage("");
     const data = new FormData(event.currentTarget);
@@ -43,7 +42,7 @@ export function SecurityCenter() {
   }
 
   if (!role) return <main className="grid min-h-screen place-items-center bg-[var(--app-background)] p-5"><p role={error ? "alert" : "status"} className="rounded-xl bg-white p-5 shadow-sm">{error || "Loading your secure workspace…"}</p></main>;
-  return <AppShell role={role} title="Security settings" subtitle="Manage your password, MFA and active sessions." actions={<button onClick={() => void logout()} className="rounded-lg border border-slate-300 bg-white px-4 py-2 font-semibold">Log out</button>}>
+  return <AppShell role={role} title="Security settings" subtitle="Manage your password, MFA and active sessions.">
     <div className="mx-auto grid max-w-4xl gap-5">
       <ErrorSummary message={error} />{message && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-emerald-900">{message}</p>}
       <Card><div className="flex flex-wrap items-center justify-between gap-4"><div><h2 className="text-xl font-bold">Multi-factor authentication</h2><p className="mt-1 text-sm text-slate-600">Protect sign-in with an authenticator and recovery codes.</p></div>{mfaEnabled ? <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700">Enabled</span> : <button onClick={() => router.push("/mfa-enrolment")} className="rounded-lg bg-blue-700 px-4 py-2 font-semibold text-white">Set up MFA</button>}</div></Card>

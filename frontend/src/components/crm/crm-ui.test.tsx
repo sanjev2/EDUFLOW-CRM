@@ -4,6 +4,8 @@ import { AppShell } from "../app-shell";
 import { StudentProfileForm } from "./student-profile-form";
 import { StudentApplication } from "./student-application";
 import { SecurityCenter } from "../auth/security-center";
+import { AdminAssignments } from "./admin-assignments";
+import { AdminSecurityAlerts } from "./admin-events";
 
 const navigation = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn(), pathname: "/dashboard/student" }));
 vi.mock("next/navigation", () => ({
@@ -71,6 +73,36 @@ describe("EduFlow CRM interface", () => {
     expect(screen.getAllByRole("link", { name: "Audit Logs" }).length).toBeGreaterThan(0);
     expect(screen.getByText("Enabled")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Set up MFA" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Logout" })).toHaveLength(1);
+  });
+  it("keeps assignment confirmation disabled until every input is valid", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) return response({ user: { role: "ADMIN", status: "ACTIVE", mfaEnabled: true }, passwordExpired: false, mfaComplete: true });
+      if (url.includes("/assignments/counsellors")) return response({ counsellors: [{ _id: "c1", fullName: "Counsellor One", email: "c@example.test", assignmentCount: 0 }] });
+      if (url.includes("/assignments/unassigned")) return response({ applications: [{ _id: "a1", studentId: { _id: "s1", fullName: "Student One", email: "s@example.test" }, stage: "ENQUIRY" }] });
+      return response({});
+    }));
+    render(<AdminAssignments />);
+    const button = await screen.findByRole("button", { name: "Confirm assignment" });
+    expect(button).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Student"), { target: { value: "s1" } });
+    fireEvent.change(screen.getByLabelText("Counsellor"), { target: { value: "c1" } });
+    fireEvent.change(screen.getByLabelText("Audit reason"), { target: { value: "too short" } });
+    expect(button).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Audit reason"), { target: { value: "Valid audit reason" } });
+    expect(button).toBeEnabled();
+  });
+  it("presents MFA enablement as a positive event instead of a medium warning", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) return response({ user: { role: "ADMIN", status: "ACTIVE", mfaEnabled: true }, passwordExpired: false, mfaComplete: true });
+      return response({ alerts: [{ _id: "alert-1", type: "MFA_ENABLED", severity: "MEDIUM", createdAt: new Date().toISOString() }] });
+    }));
+    render(<AdminSecurityAlerts />);
+    expect(await screen.findByText("Protection enabled")).toBeInTheDocument();
+    expect(screen.getByText("Multi-factor authentication was enabled successfully.")).toBeInTheDocument();
+    expect(screen.queryByText("MEDIUM")).not.toBeInTheDocument();
   });
   it("opens and closes the accessible mobile drawer", () => {
     render(<AppShell role="COUNSELLOR" title="Counsellor dashboard"><p>Content</p></AppShell>);
