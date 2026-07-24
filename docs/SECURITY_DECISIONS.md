@@ -31,6 +31,14 @@
 - SMTP credentials, message bodies, token fields, URLs, authorization, cookies and CSRF headers are excluded or redacted from application logs.
 - Formal penetration testing is deferred until feature implementation is complete.
 
+## Privacy and data portability
+
+- Export identity comes only from the authenticated session. Export APIs accept no subject identifier and return no document storage keys or file bytes.
+- Export schemas are versioned and explicitly project safe fields; model serialization is never used as an unrestricted export mechanism.
+- Profile import reuses the existing strict profile schema, adds a version envelope, rejects dangerous object keys and requires preview, explicit confirmation, CSRF and rate limits.
+- Import validation completes before a single owned-profile update. Protected account, authorization, workflow and security fields are not importable.
+- Export/import responses use private no-store caching. Export, import and rejection events are audited without recording imported values.
+
 ## CRM resource authorisation
 
 - Student profile/application endpoints derive the student identifier from the authenticated session; supplied roles, owners, stages and assignments are rejected by strict schemas.

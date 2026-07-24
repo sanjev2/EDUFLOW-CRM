@@ -36,3 +36,10 @@
 - Added mocked transport tests for message content, enumeration resistance, configuration rejection, HTML/header safety and sanitized delivery failures. Automated tests never contact a real SMTP server.
 - Added student, counsellor and administrator CRM pages using the locked colour/token system.
 - Added CRM integration and interface tests. Secure documents, final landing redesign and formal penetration testing remain deferred.
+
+## Privacy-readiness stage
+
+- Added versioned, owned JSON export with safe account/workflow projections and deliberate secret, storage-key and document-byte exclusions.
+- Added preview-and-confirm student profile import using the existing strict profile rules, CSRF, 100 KB limits, recursive dangerous-key rejection, rate limits and sanitized audit events.
+- Added a role-aware privacy page with ephemeral downloads and no browser-storage persistence.
+- Added backend ownership/mass-assignment tests and frontend accessibility/state tests.

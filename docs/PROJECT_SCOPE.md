@@ -4,7 +4,7 @@ EduFlow is a browser-based application for one education consultancy. It has thr
 
 ## Current stage
 
-The foundation and authentication stages are complete. The current CRM stage adds student profiles, enquiries/applications, counsellor assignments, internal notes, follow-up tasks and role-specific dashboards while preserving the backend security boundary.
+The foundation, authentication, CRM, private-document and privacy-portability stages are complete. EduFlow includes student profiles, enquiries/applications, counsellor assignments, internal notes, follow-up tasks, role-specific dashboards, private files and owned JSON data portability while preserving the backend security boundary.
 
 ## Exclusions
 
@@ -13,6 +13,5 @@ The foundation and authentication stages are complete. The current CRM stage add
 - AI, WhatsApp and university APIs
 - Deployment
 - Formal penetration testing before feature completion
-- Private local document upload, authenticated download and role-aware document oversight
 
 The implemented document stage is intentionally local: it does not include cloud storage, OCR, AI, payments or malware scanning.

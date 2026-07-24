@@ -16,6 +16,7 @@ The browser is untrusted. The API validates every request and mediates access to
 - Sensitive-data leakage through logs, errors or public files
 - Malicious uploads and resource exhaustion
 - Excessive privilege and unsafe administrative actions
+- Privacy export leakage, mass-assignment import and prototype pollution
 
 ## Implemented authentication controls
 
@@ -33,7 +34,8 @@ Email threats include account enumeration, resend flooding, Host-header link poi
 - Development outbox links are intentionally available only outside production and require a trusted local environment.
 - Unresolved Next dependency findings affect build-time CSS and unused image-optimization paths; compatible upstream remediation is monitored.
 - Formal penetration testing remains deferred until feature completion.
-- Private upload controls remain planned because documents are outside this stage.
+
+Privacy controls address cross-account export, excessive fields, cache leakage, mass assignment, oversized JSON and prototype pollution. The session determines export/import ownership; strict allowlists, 100 KB limits, CSRF, confirmation, rate limits and sanitized auditing protect import. Export omits secrets, storage identifiers and document bytes.
 
 ## CRM threats and controls
 
