@@ -7,7 +7,7 @@ import { hashPassword } from "../security/password.js";
 import { config } from "../config.js";
 import { EmailVerificationToken, PasswordResetToken } from "../models/Tokens.js";
 import { keyedHash, randomToken, sha256 } from "../security/crypto.js";
-import { sendCounsellorInvitation } from "../email/delivery.js";
+import { providerAccepted, sendCounsellorInvitation, type DeliveryReceipt } from "../email/delivery.js";
 import { audit } from "../security/audit.js";
 import { ApiError } from "../errors.js";
 import { Session } from "../models/Session.js";
@@ -66,9 +66,34 @@ adminRouter.get("/users/:id", async (req, res) => {
       assignment: activeAssignment ? { counsellor: activeAssignment.counsellorId } : null,
       application: application ? { stage: application.stage, active: application.active, createdAt: application.createdAt, updatedAt: application.updatedAt } : null,
     },
-    recentEvents: recentEvents.map((event) => ({ id: String(event._id), event: event.event, createdAt: event.createdAt })),
+    recentEvents: recentEvents.map((event) => ({
+      id: String(event._id),
+      event: event.event,
+      createdAt: event.createdAt,
+      ...(event.event === "COUNSELLOR_INVITATION_SENT" || event.event === "COUNSELLOR_INVITATION_FAILED"
+        ? { delivery: safeDeliveryView(event.metadata) }
+        : {}),
+    })),
   });
 });
+
+function safeDeliveryView(metadata: Record<string, unknown>) {
+  const category = ["ACCEPTED", "REJECTED", "PENDING", "LOCAL_OUTBOX", "LOCAL_FAILURE"].includes(String(metadata.deliveryCategory))
+    ? String(metadata.deliveryCategory)
+    : "LOCAL_FAILURE";
+  return {
+    category,
+    acceptedRecipientCount: safeCount(metadata.acceptedRecipientCount),
+    rejectedRecipientCount: safeCount(metadata.rejectedRecipientCount),
+    pendingRecipientCount: safeCount(metadata.pendingRecipientCount),
+    smtpStatus: /^\d{3}$|^(?:LOCAL|UNKNOWN)$/.test(String(metadata.smtpStatus)) ? String(metadata.smtpStatus) : "UNKNOWN",
+    deliveredAt: typeof metadata.deliveredAt === "string" ? metadata.deliveredAt : undefined,
+  };
+}
+
+function safeCount(value: unknown) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
 
 async function invitationRateLimit(req: import("express").Request, emailAddress: string, outcome: string, limit: number, minutes: number) {
   const emailHash = keyedHash(emailAddress);
@@ -80,10 +105,6 @@ async function invitationRateLimit(req: import("express").Request, emailAddress:
 }
 
 async function issueCounsellorInvitation(req: import("express").Request, user: InstanceType<typeof User>) {
-  await Promise.all([
-    EmailVerificationToken.updateMany({ userId: user._id, usedAt: { $exists: false } }, { usedAt: new Date() }),
-    PasswordResetToken.updateMany({ userId: user._id, usedAt: { $exists: false } }, { usedAt: new Date() }),
-  ]);
   const verificationToken = randomToken();
   const setupToken = randomToken();
   const expiresAt = new Date(Date.now() + 24 * 60 * 60_000);
@@ -91,21 +112,51 @@ async function issueCounsellorInvitation(req: import("express").Request, user: I
     EmailVerificationToken.create({ userId: user._id, tokenHash: sha256(verificationToken), expiresAt }),
     PasswordResetToken.create({ userId: user._id, tokenHash: sha256(setupToken), expiresAt }),
   ]);
+  let receipt: DeliveryReceipt;
   try {
-    await sendCounsellorInvitation({ email: user.email, fullName: user.fullName, verificationToken, setupToken });
-    await audit(req, "COUNSELLOR_INVITATION_SENT", { actorId: req.auth!.user._id, subjectId: user._id });
-    return true;
-  } catch {
+    receipt = await sendCounsellorInvitation({ email: user.email, fullName: user.fullName, verificationToken, setupToken });
+    if (!providerAccepted(receipt)) throw new DeliveryNotAcceptedError(receipt);
+  } catch (error) {
     const now = new Date();
+    const receipt = error instanceof DeliveryNotAcceptedError ? error.receipt : undefined;
     await Promise.all([
       EmailVerificationToken.updateOne({ _id: verification._id }, { usedAt: now }),
       PasswordResetToken.updateOne({ _id: setup._id }, { usedAt: now }),
-      SecurityAlert.create({ userId: user._id, type: "EMAIL_DELIVERY_FAILURE", severity: "MEDIUM", metadata: { purpose: "counsellor-invitation" } }),
-      audit(req, "EMAIL_DELIVERY_FAILURE", { actorId: req.auth!.user._id, subjectId: user._id, metadata: { purpose: "counsellor-invitation" } }),
-      audit(req, "COUNSELLOR_INVITATION_FAILED", { actorId: req.auth!.user._id, subjectId: user._id }),
+      SecurityAlert.create({ userId: user._id, type: "EMAIL_DELIVERY_FAILURE", severity: "MEDIUM", metadata: { purpose: "counsellor-invitation", ...(receipt ? deliveryMetadata(receipt) : { deliveryCategory: "LOCAL_FAILURE" }) } }),
+      audit(req, "EMAIL_DELIVERY_FAILURE", { actorId: req.auth!.user._id, subjectId: user._id, metadata: { purpose: "counsellor-invitation", ...(receipt ? deliveryMetadata(receipt) : { deliveryCategory: "LOCAL_FAILURE" }) } }),
+      audit(req, "COUNSELLOR_INVITATION_FAILED", { actorId: req.auth!.user._id, subjectId: user._id, metadata: receipt ? deliveryMetadata(receipt) : { deliveryCategory: "LOCAL_FAILURE" } }),
     ]);
     return false;
   }
+  const rotatedAt = new Date();
+  await Promise.all([
+    EmailVerificationToken.updateMany({ userId: user._id, _id: { $ne: verification._id }, usedAt: { $exists: false } }, { usedAt: rotatedAt }),
+    PasswordResetToken.updateMany({ userId: user._id, _id: { $ne: setup._id }, usedAt: { $exists: false } }, { usedAt: rotatedAt }),
+  ]);
+  await audit(req, "COUNSELLOR_INVITATION_SENT", {
+    actorId: req.auth!.user._id,
+    subjectId: user._id,
+    metadata: deliveryMetadata(receipt),
+  });
+  return true;
+}
+
+class DeliveryNotAcceptedError extends Error {
+  constructor(readonly receipt: DeliveryReceipt) {
+    super("Email provider did not accept the intended recipient");
+  }
+}
+
+function deliveryMetadata(receipt: DeliveryReceipt) {
+  return {
+    acceptedRecipientCount: receipt.acceptedRecipientCount,
+    rejectedRecipientCount: receipt.rejectedRecipientCount,
+    pendingRecipientCount: receipt.pendingRecipientCount,
+    smtpStatus: receipt.smtpStatus,
+    deliveryCategory: receipt.category,
+    ...(receipt.messageIdHash ? { messageIdHash: receipt.messageIdHash } : {}),
+    deliveredAt: receipt.deliveredAt,
+  };
 }
 
 adminRouter.post("/users/counsellors", async (req, res) => {

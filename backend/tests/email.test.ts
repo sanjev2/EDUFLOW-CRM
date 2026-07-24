@@ -5,7 +5,7 @@ import pino from "pino";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../src/app.js";
 import { parseConfig } from "../src/config.js";
-import { setEmailTransportForTests, verificationMessage, type EmailMessage } from "../src/email/delivery.js";
+import { sanitizeProviderReceipt, setEmailTransportForTests, verificationMessage, type DeliveryReceipt, type EmailMessage } from "../src/email/delivery.js";
 import { User } from "../src/models/User.js";
 import { AuditLog } from "../src/models/AuditLog.js";
 import { EmailVerificationToken, PasswordResetToken } from "../src/models/Tokens.js";
@@ -15,7 +15,12 @@ import { loggerOptions } from "../src/logger.js";
 
 const strong = "Correct-Horse7-Battery!";
 const delivered: EmailMessage[] = [];
-const capture = { send: (message: EmailMessage) => { delivered.push(message); return Promise.resolve(); } };
+const receipt: DeliveryReceipt = {
+  acceptedRecipientCount: 1, rejectedRecipientCount: 0, pendingRecipientCount: 0,
+  smtpStatus: "250", category: "ACCEPTED", messageIdHash: "b".repeat(64),
+  deliveredAt: "2026-07-24T12:00:00.000Z",
+};
+const capture = { send: (message: EmailMessage) => { delivered.push(message); return Promise.resolve(receipt); } };
 
 beforeAll(async () => { if (!mongoose.connection.readyState) await mongoose.connect(process.env.MONGODB_URI!); });
 beforeEach(async () => {
@@ -62,6 +67,29 @@ describe("email message delivery", () => {
     expect(message.html).not.toContain("<img");
     expect(() => verificationMessage({ email: "safe@example.test\r\nBcc: attacker@example.test", fullName: "Safe", token: "safe-token-value" })).toThrow("Invalid email recipient");
     expect(() => verificationMessage({ email: "safe@example.test", fullName: "Safe\r\nBcc: attacker@example.test", token: "safe-token-value" })).toThrow("Invalid email recipient name");
+  });
+
+  it("sanitizes provider receipts and accepts only the intended envelope recipient", () => {
+    const accepted = sanitizeProviderReceipt({
+      accepted: ["intended@example.test"],
+      rejected: [],
+      pending: [],
+      response: "250 2.0.0 queued as provider-private-reference",
+      messageId: "<private-message-id@example.test>",
+    }, "intended@example.test");
+    expect(accepted).toMatchObject({
+      category: "ACCEPTED", acceptedRecipientCount: 1, rejectedRecipientCount: 0,
+      pendingRecipientCount: 0, smtpStatus: "250",
+    });
+    expect(accepted.messageIdHash).toMatch(/^[a-f\d]{64}$/);
+    expect(JSON.stringify(accepted)).not.toMatch(/intended@example|provider-private|private-message-id/i);
+
+    expect(sanitizeProviderReceipt({
+      accepted: ["different@example.test"], rejected: [], pending: [], response: "250 accepted",
+    }, "intended@example.test").category).toBe("REJECTED");
+    expect(sanitizeProviderReceipt({
+      accepted: [], rejected: [], pending: ["intended@example.test"], response: "450 pending",
+    }, "intended@example.test")).toMatchObject({ category: "PENDING", pendingRecipientCount: 1, smtpStatus: "450" });
   });
 
   it("uses the development-only ignored outbox when no test transport is supplied", async () => {

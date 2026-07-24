@@ -1,6 +1,7 @@
 import nodemailer from "nodemailer";
 import { config } from "../config.js";
 import { deliverDevelopmentLink } from "../security/outbox.js";
+import { sha256 } from "../security/crypto.js";
 
 export interface EmailMessage {
   type: "VERIFY_EMAIL" | "RESET_PASSWORD" | "COUNSELLOR_INVITATION";
@@ -24,7 +25,17 @@ export function counsellorInvitationMessage(input: { email: string; fullName: st
     html: `<p>Hello ${name},</p><p>An EduFlow administrator invited you to a counsellor account.</p><p><a href="${escapeHtml(link)}">Verify your email and set your password</a></p><p>This single-use invitation expires in 24 hours.</p><p>If you were not expecting it, ignore this email.</p>`,
   };
 }
-export interface EmailTransport { send(message: EmailMessage): Promise<void>; }
+export type DeliveryCategory = "ACCEPTED" | "REJECTED" | "PENDING" | "LOCAL_OUTBOX";
+export interface DeliveryReceipt {
+  acceptedRecipientCount: number;
+  rejectedRecipientCount: number;
+  pendingRecipientCount: number;
+  smtpStatus: string;
+  category: DeliveryCategory;
+  messageIdHash?: string;
+  deliveredAt: string;
+}
+export interface EmailTransport { send(message: EmailMessage): Promise<DeliveryReceipt>; }
 
 let testTransport: EmailTransport | undefined;
 export function setEmailTransportForTests(transport?: EmailTransport) { testTransport = transport; }
@@ -38,6 +49,56 @@ function assertSafeAddress(value: string) {
 }
 function assertSafeDisplayName(value: string) {
   if (/[\r\n]/.test(value)) throw new Error("Invalid email recipient name");
+}
+
+function addressValue(value: unknown) {
+  if (typeof value === "string") return value.trim().toLowerCase();
+  if (value && typeof value === "object" && "address" in value && typeof value.address === "string") {
+    return value.address.trim().toLowerCase();
+  }
+  return "";
+}
+
+function smtpStatus(response: unknown) {
+  const match = typeof response === "string" ? response.match(/^\s*(\d{3})\b/) : null;
+  return match?.[1] ?? "UNKNOWN";
+}
+
+export function sanitizeProviderReceipt(info: {
+  accepted?: unknown[];
+  rejected?: unknown[];
+  pending?: unknown[];
+  response?: unknown;
+  messageId?: unknown;
+}, intendedRecipient: string): DeliveryReceipt {
+  const intended = intendedRecipient.trim().toLowerCase();
+  const accepted = (info.accepted ?? []).map(addressValue).filter(Boolean);
+  const rejected = (info.rejected ?? []).map(addressValue).filter(Boolean);
+  const pending = (info.pending ?? []).map(addressValue).filter(Boolean);
+  const acceptedIntended = accepted.includes(intended);
+  const rejectedIntended = rejected.includes(intended);
+  const pendingIntended = pending.includes(intended);
+  const category: DeliveryCategory = acceptedIntended && !rejectedIntended && !pendingIntended
+    ? "ACCEPTED"
+    : pendingIntended || pending.length > 0
+      ? "PENDING"
+      : "REJECTED";
+  return {
+    acceptedRecipientCount: accepted.length,
+    rejectedRecipientCount: rejected.length,
+    pendingRecipientCount: pending.length,
+    smtpStatus: smtpStatus(info.response),
+    category,
+    ...(typeof info.messageId === "string" && info.messageId ? { messageIdHash: sha256(info.messageId) } : {}),
+    deliveredAt: new Date().toISOString(),
+  };
+}
+
+export function providerAccepted(receipt: DeliveryReceipt) {
+  return (receipt.category === "ACCEPTED" || receipt.category === "LOCAL_OUTBOX")
+    && receipt.acceptedRecipientCount === 1
+    && receipt.rejectedRecipientCount === 0
+    && receipt.pendingRecipientCount === 0;
 }
 
 export function verificationMessage(input: { email: string; fullName: string; token: string }): EmailMessage {
@@ -71,7 +132,14 @@ function configuredTransport(): EmailTransport {
   if (config.EMAIL_DELIVERY_MODE === "outbox") {
     return { send: (message) => {
       deliverDevelopmentLink({ type: message.type, email: message.to, link: message.link, createdAt: new Date().toISOString() });
-      return Promise.resolve();
+      return Promise.resolve({
+        acceptedRecipientCount: 1,
+        rejectedRecipientCount: 0,
+        pendingRecipientCount: 0,
+        smtpStatus: "LOCAL",
+        category: "LOCAL_OUTBOX",
+        deliveredAt: new Date().toISOString(),
+      });
     } };
   }
   const transporter = nodemailer.createTransport({
@@ -81,21 +149,22 @@ function configuredTransport(): EmailTransport {
   });
   return {
     send: async (message) => {
-      await transporter.sendMail({
+      const info = await transporter.sendMail({
         from: { name: config.EMAIL_FROM_NAME, address: config.EMAIL_FROM_ADDRESS! },
         to: { name: message.recipientName, address: message.to },
         subject: message.subject, text: message.text, html: message.html,
       });
+      return sanitizeProviderReceipt(info, message.to);
     },
   };
 }
 
 export async function sendEmailVerification(input: { email: string; fullName: string; token: string }) {
-  await configuredTransport().send(verificationMessage(input));
+  return configuredTransport().send(verificationMessage(input));
 }
 export async function sendPasswordReset(input: { email: string; fullName: string; token: string }) {
-  await configuredTransport().send(passwordResetMessage(input));
+  return configuredTransport().send(passwordResetMessage(input));
 }
 export async function sendCounsellorInvitation(input: { email: string; fullName: string; verificationToken: string; setupToken: string }) {
-  await configuredTransport().send(counsellorInvitationMessage(input));
+  return configuredTransport().send(counsellorInvitationMessage(input));
 }

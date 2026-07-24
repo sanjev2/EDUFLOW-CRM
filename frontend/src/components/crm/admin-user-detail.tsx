@@ -12,7 +12,14 @@ type Detail = {
     assignment?: { counsellor?: { fullName?: string; email?: string } } | null;
     application?: { stage: string; active: boolean } | null;
   };
-  recentEvents: Array<{ id: string; event: string; createdAt: string }>;
+  recentEvents: Array<{
+    id: string; event: string; createdAt: string;
+    delivery?: {
+      category: "ACCEPTED" | "REJECTED" | "PENDING" | "LOCAL_OUTBOX" | "LOCAL_FAILURE";
+      acceptedRecipientCount: number; rejectedRecipientCount: number; pendingRecipientCount: number;
+      smtpStatus: string; deliveredAt?: string;
+    };
+  }>;
 };
 
 const safeActionMessages: Record<string, string> = {
@@ -111,7 +118,7 @@ export function AdminUserDetail({ userId, onClose, onChanged }: { userId: string
             <button disabled={!validReason || confirmation !== "ARCHIVE ACCOUNT" || Boolean(busy)} onClick={() => void action("archive", `/api/v1/admin/users/${userId}/archive`, "POST", { confirm: confirmation, reason })} className="rounded-lg bg-amber-700 px-3 py-2 font-semibold text-white disabled:opacity-50">Archive account</button>
           </div>
         </div>
-        <div className="mt-5 rounded-xl border p-4"><h3 className="font-bold">Recent audit activity</h3>{detail.recentEvents.length ? <ul className="mt-3 grid gap-2 text-sm">{detail.recentEvents.map((event) => <li key={event.id} className="flex justify-between gap-4 border-b pb-2"><span>{event.event.replaceAll("_", " ")}</span><time>{formatDate(event.createdAt)}</time></li>)}</ul> : <p className="mt-2 text-sm text-[var(--muted)]">No recent account events.</p>}</div>
+        <div className="mt-5 rounded-xl border p-4"><h3 className="font-bold">Recent audit activity</h3>{detail.recentEvents.length ? <ul className="mt-3 grid gap-2 text-sm">{detail.recentEvents.map((event) => <li key={event.id} className="flex justify-between gap-4 border-b pb-2"><div><span>{event.event.replaceAll("_", " ")}</span>{event.delivery && <DeliveryStatus delivery={event.delivery} />}</div><time>{formatDate(event.createdAt)}</time></li>)}</ul> : <p className="mt-2 text-sm text-[var(--muted)]">No recent account events.</p>}</div>
       </>}
     </section>
   </div>;
@@ -119,6 +126,19 @@ export function AdminUserDetail({ userId, onClose, onChanged }: { userId: string
 
 function Info({ label, value }: { label: string; value: string }) {
   return <div><p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">{label}</p><p className="mt-1 font-semibold">{value}</p></div>;
+}
+function DeliveryStatus({ delivery }: { delivery: NonNullable<Detail["recentEvents"][number]["delivery"]> }) {
+  const descriptions = {
+    ACCEPTED: "Accepted by email provider — Inbox placement is not guaranteed.",
+    REJECTED: "Rejected by email provider. The invitation was not rotated.",
+    PENDING: "Temporarily pending with email provider. The invitation was not rotated.",
+    LOCAL_OUTBOX: "Captured by the local development outbox; no external delivery occurred.",
+    LOCAL_FAILURE: "Local email delivery failed. The invitation was not rotated.",
+  };
+  const tone = delivery.category === "ACCEPTED" ? "text-emerald-800" : delivery.category === "PENDING" ? "text-amber-800" : "text-red-800";
+  return <p className={`mt-1 text-xs font-semibold ${tone}`}>
+    {descriptions[delivery.category]} SMTP status {delivery.smtpStatus}; accepted {delivery.acceptedRecipientCount}, rejected {delivery.rejectedRecipientCount}, pending {delivery.pendingRecipientCount}.
+  </p>;
 }
 function formatDate(value: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));

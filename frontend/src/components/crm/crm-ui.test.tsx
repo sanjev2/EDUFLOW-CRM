@@ -232,7 +232,8 @@ describe("EduFlow CRM interface", () => {
     expect(screen.getByRole("button", { name: "Sending invitation…" })).toBeDisabled();
     await waitFor(() => expect(finish).toBeTypeOf("function"));
     finish(await response({ user: { id: "c1", role: "COUNSELLOR" } }));
-    expect(await screen.findByRole("status")).toHaveTextContent("invitation was emailed");
+    expect(await screen.findByRole("status")).toHaveTextContent("accepted by the email provider");
+    expect(screen.getByRole("status")).toHaveTextContent("Inbox placement is not guaranteed");
     fireEvent.click(screen.getAllByRole("button", { name: "Close" }).at(-1)!);
     expect(await screen.findByText("INVITATION PENDING")).toBeInTheDocument();
     expect(screen.getByText("COUNSELLOR")).toBeInTheDocument();
@@ -282,13 +283,20 @@ describe("EduFlow CRM interface", () => {
       return response({
         user: { id: "u1", fullName: "Pending Counsellor", email: "pending@example.test", role: "COUNSELLOR", status: "ACTIVE", emailVerified: false, mfaEnabled: false, createdAt: "2026-07-24T10:00:00.000Z", passwordExpired: false },
         summary: { activeSessions: 0, documentCount: 0, caseload: 0, assignment: null, application: null },
-        recentEvents: [{ id: "e1", event: "COUNSELLOR_CREATED", createdAt: "2026-07-24T10:00:00.000Z" }],
+        recentEvents: [
+          {
+            id: "e1", event: "COUNSELLOR_INVITATION_SENT", createdAt: "2026-07-24T10:00:00.000Z",
+            delivery: { category: "ACCEPTED", acceptedRecipientCount: 1, rejectedRecipientCount: 0, pendingRecipientCount: 0, smtpStatus: "250", deliveredAt: "2026-07-24T10:00:00.000Z" },
+          },
+        ],
       });
     }));
     render(<AdminUserDetail userId="u1" onClose={close} onChanged={vi.fn(async () => undefined)} />);
     expect(screen.getByRole("status")).toHaveTextContent("Loading user details");
     expect(await screen.findByText("Pending Counsellor")).toBeInTheDocument();
-    expect(screen.getByText("COUNSELLOR CREATED")).toBeInTheDocument();
+    expect(screen.getByText("COUNSELLOR INVITATION SENT")).toBeInTheDocument();
+    expect(screen.getByText(/Accepted by email provider/)).toHaveTextContent("Inbox placement is not guaranteed");
+    expect(screen.getByText(/Accepted by email provider/)).toHaveTextContent("accepted 1, rejected 0, pending 0");
     const cancel = screen.getByRole("button", { name: "Cancel pending invitation" });
     expect(cancel).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Mandatory audit reason"), { target: { value: "Valid cancellation reason" } });

@@ -46,7 +46,7 @@ export function AdminUsers() {
     try {
       await refreshCsrf();
       await api("/api/v1/admin/users/counsellors", { method: "POST", body: JSON.stringify({ fullName: data.get("fullName"), email: data.get("email") }) });
-      setInviteSuccess("Counsellor account created. An invitation was emailed so they can verify their address and set a password.");
+      setInviteSuccess("Counsellor account created. The invitation was accepted by the email provider — Inbox placement is not guaranteed.");
       form.reset();
       await load();
     } catch (reason) {

@@ -7,13 +7,18 @@ import { Session } from "../src/models/Session.js";
 import { EmailVerificationToken, PasswordResetToken } from "../src/models/Tokens.js";
 import { AuditLog } from "../src/models/AuditLog.js";
 import { SecurityAlert } from "../src/models/Security.js";
-import { setEmailTransportForTests, type EmailMessage } from "../src/email/delivery.js";
+import { setEmailTransportForTests, type DeliveryReceipt, type EmailMessage } from "../src/email/delivery.js";
 import { hashPassword } from "../src/security/password.js";
 import { randomToken, sha256 } from "../src/security/crypto.js";
 
 const password = "Invitation-Test9!";
 const delivered: EmailMessage[] = [];
-const capture = { send: (message: EmailMessage) => { delivered.push(message); return Promise.resolve(); } };
+const acceptedReceipt = (overrides: Partial<DeliveryReceipt> = {}): DeliveryReceipt => ({
+  acceptedRecipientCount: 1, rejectedRecipientCount: 0, pendingRecipientCount: 0,
+  smtpStatus: "250", category: "ACCEPTED", messageIdHash: "a".repeat(64),
+  deliveredAt: "2026-07-24T12:00:00.000Z", ...overrides,
+});
+const capture = { send: (message: EmailMessage) => { delivered.push(message); return Promise.resolve(acceptedReceipt()); } };
 
 beforeAll(async () => { if (!mongoose.connection.readyState) await mongoose.connect(process.env.MONGODB_URI!); });
 beforeEach(async () => {
@@ -57,6 +62,20 @@ describe("administrator counsellor invitations", () => {
     expect(await PasswordResetToken.countDocuments()).toBe(1);
     expect(await AuditLog.countDocuments({ event: "COUNSELLOR_CREATED", subjectId: response.body.user.id })).toBe(1);
     expect(await AuditLog.countDocuments({ event: "COUNSELLOR_INVITATION_SENT", subjectId: response.body.user.id })).toBe(1);
+    const receiptAudit = await AuditLog.findOne({ event: "COUNSELLOR_INVITATION_SENT", subjectId: response.body.user.id }).lean();
+    expect(receiptAudit?.metadata).toMatchObject({
+      acceptedRecipientCount: 1, rejectedRecipientCount: 0, pendingRecipientCount: 0,
+      smtpStatus: "250", deliveryCategory: "ACCEPTED", messageIdHash: "a".repeat(64),
+    });
+    expect(JSON.stringify(receiptAudit)).not.toMatch(/invited@example|accept-invitation|verification|setup/i);
+    const details = await request(app).get(`/api/v1/admin/users/${response.body.user.id}`)
+      .set("Cookie", admin.cookie).set("Origin", "http://localhost:3100").expect(200);
+    const deliveryEvent = details.body.recentEvents.find((event: { event: string }) => event.event === "COUNSELLOR_INVITATION_SENT");
+    expect(deliveryEvent.delivery).toMatchObject({
+      category: "ACCEPTED", acceptedRecipientCount: 1, rejectedRecipientCount: 0,
+      pendingRecipientCount: 0, smtpStatus: "250",
+    });
+    expect(deliveryEvent.delivery).not.toHaveProperty("messageIdHash");
   });
 
   it("requires authentication, completed MFA, fresh ADMIN access and CSRF", async () => {
@@ -132,6 +151,46 @@ describe("administrator counsellor invitations", () => {
     expect(await PasswordResetToken.countDocuments({ usedAt: { $exists: false } })).toBe(1);
     for (let attempt = 0; attempt < 4; attempt += 1) await resend().expect(202);
     await resend().expect(429);
+  });
+
+  it.each([
+    ["rejected", acceptedReceipt({ acceptedRecipientCount: 0, rejectedRecipientCount: 1, category: "REJECTED", smtpStatus: "550" })],
+    ["pending", acceptedReceipt({ acceptedRecipientCount: 0, pendingRecipientCount: 1, category: "PENDING", smtpStatus: "450" })],
+  ])("treats a %s provider result as unavailable and cleans up provisional state", async (_label, receipt) => {
+    const admin = await identity("ADMIN");
+    setEmailTransportForTests({ send: () => Promise.resolve(receipt) });
+    const response = await create(admin).expect(503);
+    expect(response.body.error.code).toBe("EMAIL_DELIVERY_UNAVAILABLE");
+    expect(await User.countDocuments({ email: payload.email })).toBe(0);
+    expect(await EmailVerificationToken.countDocuments()).toBe(0);
+    expect(await PasswordResetToken.countDocuments()).toBe(0);
+    const failure = await AuditLog.findOne({ event: "COUNSELLOR_INVITATION_FAILED" }).lean();
+    expect(failure?.metadata).toMatchObject({ deliveryCategory: receipt.category, smtpStatus: receipt.smtpStatus });
+    expect(JSON.stringify(failure)).not.toMatch(/invited@example|accept-invitation|message-id/i);
+  });
+
+  it("keeps current invitation tokens usable until a resend is accepted", async () => {
+    const admin = await identity("ADMIN");
+    const created = await create(admin).expect(201);
+    const originalVerification = await EmailVerificationToken.findOne({ usedAt: { $exists: false } });
+    const originalSetup = await PasswordResetToken.findOne({ usedAt: { $exists: false } });
+    setEmailTransportForTests({ send: () => Promise.resolve(acceptedReceipt({
+      acceptedRecipientCount: 0, pendingRecipientCount: 1, category: "PENDING", smtpStatus: "450",
+    })) });
+    const resend = () => request(app).post(`/api/v1/admin/users/${created.body.user.id}/resend-invitation`)
+      .set("Cookie", admin.cookie).set("Origin", "http://localhost:3100").set("x-csrf-token", admin.csrf).send({});
+    await resend().expect(202);
+    expect((await EmailVerificationToken.findById(originalVerification!._id))!.usedAt).toBeUndefined();
+    expect((await PasswordResetToken.findById(originalSetup!._id))!.usedAt).toBeUndefined();
+    expect(await EmailVerificationToken.countDocuments({ usedAt: { $exists: false } })).toBe(1);
+    expect(await PasswordResetToken.countDocuments({ usedAt: { $exists: false } })).toBe(1);
+
+    setEmailTransportForTests(capture);
+    await resend().expect(202);
+    expect((await EmailVerificationToken.findById(originalVerification!._id))!.usedAt).toBeInstanceOf(Date);
+    expect((await PasswordResetToken.findById(originalSetup!._id))!.usedAt).toBeInstanceOf(Date);
+    expect(await EmailVerificationToken.countDocuments({ usedAt: { $exists: false } })).toBe(1);
+    expect(await PasswordResetToken.countDocuments({ usedAt: { $exists: false } })).toBe(1);
   });
 
   it("supports verify, secure password setup and counsellor login", async () => {
