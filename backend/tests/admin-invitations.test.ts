@@ -118,12 +118,18 @@ describe("administrator counsellor invitations", () => {
   it("resends only eligible invitations with generic, rate-limited responses", async () => {
     const admin = await identity("ADMIN");
     const created = await create(admin).expect(201);
+    const originalVerification = await EmailVerificationToken.findOne();
+    const originalSetup = await PasswordResetToken.findOne();
     delivered.splice(0);
     const resend = () => request(app).post(`/api/v1/admin/users/${created.body.user.id}/resend-invitation`).set("Cookie", admin.cookie).set("Origin", "http://localhost:3100").set("x-csrf-token", admin.csrf).send({});
     const response = await resend().expect(202);
     expect(response.body).toEqual({ message: "If the account is eligible, an invitation will be sent." });
     expect(delivered).toHaveLength(1);
     expect(await AuditLog.countDocuments({ event: "COUNSELLOR_INVITATION_SENT" })).toBe(2);
+    expect((await EmailVerificationToken.findById(originalVerification!._id))!.usedAt).toBeInstanceOf(Date);
+    expect((await PasswordResetToken.findById(originalSetup!._id))!.usedAt).toBeInstanceOf(Date);
+    expect(await EmailVerificationToken.countDocuments({ usedAt: { $exists: false } })).toBe(1);
+    expect(await PasswordResetToken.countDocuments({ usedAt: { $exists: false } })).toBe(1);
     for (let attempt = 0; attempt < 4; attempt += 1) await resend().expect(202);
     await resend().expect(429);
   });

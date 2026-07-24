@@ -12,7 +12,7 @@ export interface IUser {
   passwordExpiresAt: Date;
   emailVerifiedAt?: Date;
   consentAt?: Date;
-  status: "ACTIVE" | "SUSPENDED";
+  status: "ACTIVE" | "SUSPENDED" | "ARCHIVED";
   lockedUntil?: Date;
   failedLoginCount: number;
   mfaEnabled: boolean;
@@ -32,7 +32,7 @@ const userSchema = new Schema<IUser>({
   passwordExpiresAt: { type: Date, required: true },
   emailVerifiedAt: Date,
   consentAt: Date,
-  status: { type: String, enum: ["ACTIVE", "SUSPENDED"], default: "ACTIVE", required: true },
+  status: { type: String, enum: ["ACTIVE", "SUSPENDED", "ARCHIVED"], default: "ACTIVE", required: true },
   lockedUntil: Date,
   failedLoginCount: { type: Number, default: 0, min: 0, select: false },
   mfaEnabled: { type: Boolean, default: false },
