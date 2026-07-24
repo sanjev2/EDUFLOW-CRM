@@ -75,7 +75,7 @@ describe("administrator counsellor invitations", () => {
       category: "ACCEPTED", acceptedRecipientCount: 1, rejectedRecipientCount: 0,
       pendingRecipientCount: 0, smtpStatus: "250",
     });
-    expect(deliveryEvent.delivery).not.toHaveProperty("messageIdHash");
+    expect(deliveryEvent.delivery.messageIdHash).toBe("a".repeat(64));
   });
 
   it("requires authentication, completed MFA, fresh ADMIN access and CSRF", async () => {

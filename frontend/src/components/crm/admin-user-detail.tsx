@@ -17,7 +17,7 @@ type Detail = {
     delivery?: {
       category: "ACCEPTED" | "REJECTED" | "PENDING" | "LOCAL_OUTBOX" | "LOCAL_FAILURE";
       acceptedRecipientCount: number; rejectedRecipientCount: number; pendingRecipientCount: number;
-      smtpStatus: string; deliveredAt?: string;
+      smtpStatus: string; deliveredAt?: string; messageIdHash?: string;
     };
   }>;
 };
@@ -33,17 +33,40 @@ const safeActionMessages: Record<string, string> = {
 
 export function AdminUserDetail({ userId, onClose, onChanged }: { userId: string; onClose: () => void; onChanged: () => Promise<void> }) {
   const [detail, setDetail] = useState<Detail>();
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState("");
   const [reason, setReason] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const closeButton = useRef<HTMLButtonElement>(null);
+  const requestSequence = useRef(0);
+  const activeRequest = useRef<AbortController | undefined>(undefined);
 
   const load = useCallback(async () => {
-    setDetail(await api<Detail>(`/api/v1/admin/users/${userId}`));
+    const sequence = ++requestSequence.current;
+    activeRequest.current?.abort();
+    const controller = new AbortController();
+    activeRequest.current = controller;
+    setLoading(true);
+    setError("");
+    setDetail(undefined);
+    try {
+      const result = await api<Detail>(`/api/v1/admin/users/${userId}`, { signal: controller.signal });
+      if (sequence === requestSequence.current) setDetail(result);
+    } catch {
+      if (!controller.signal.aborted && sequence === requestSequence.current) setError("User details could not be loaded.");
+    } finally {
+      if (sequence === requestSequence.current) setLoading(false);
+    }
   }, [userId]);
-  useEffect(() => { void load().catch(() => setError("User details could not be loaded.")); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => {
+      requestSequence.current += 1;
+      activeRequest.current?.abort();
+    };
+  }, [load]);
   useEffect(() => {
     closeButton.current?.focus();
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape" && !busy) onClose(); };
@@ -85,9 +108,9 @@ export function AdminUserDetail({ userId, onClose, onChanged }: { userId: string
         <div><h2 id="user-detail-title" className="text-xl font-extrabold text-[var(--navy)]">User details</h2><p className="text-sm text-[var(--muted)]">Security-safe account information and lifecycle actions.</p></div>
         <button ref={closeButton} onClick={onClose} disabled={Boolean(busy)} className="rounded-lg px-3 py-2 font-semibold hover:bg-slate-100">Close</button>
       </div>
-      {error && <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}
+      {error && <div role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-800"><p>{error}</p><button type="button" onClick={() => void load()} className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-2 font-semibold">Retry</button></div>}
       {message && <p role="status" className="mt-4 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-900">{message}</p>}
-      {!detail ? <p role="status" className="mt-6">Loading user details…</p> : <>
+      {loading ? <p role="status" className="mt-6">Loading user details…</p> : detail ? <>
         <div className="mt-6 grid gap-3 rounded-xl border p-4 sm:grid-cols-2 lg:grid-cols-3">
           <Info label="Name" value={user!.fullName} /><Info label="Email" value={user!.email} /><Info label="Role" value={user!.role} />
           <Info label="Status" value={user!.status} /><Info label="Email verification" value={user!.emailVerified ? "Verified" : "Pending"} />
@@ -119,7 +142,7 @@ export function AdminUserDetail({ userId, onClose, onChanged }: { userId: string
           </div>
         </div>
         <div className="mt-5 rounded-xl border p-4"><h3 className="font-bold">Recent audit activity</h3>{detail.recentEvents.length ? <ul className="mt-3 grid gap-2 text-sm">{detail.recentEvents.map((event) => <li key={event.id} className="flex justify-between gap-4 border-b pb-2"><div><span>{event.event.replaceAll("_", " ")}</span>{event.delivery && <DeliveryStatus delivery={event.delivery} />}</div><time>{formatDate(event.createdAt)}</time></li>)}</ul> : <p className="mt-2 text-sm text-[var(--muted)]">No recent account events.</p>}</div>
-      </>}
+      </> : null}
     </section>
   </div>;
 }
@@ -138,7 +161,12 @@ function DeliveryStatus({ delivery }: { delivery: NonNullable<Detail["recentEven
   const tone = delivery.category === "ACCEPTED" ? "text-emerald-800" : delivery.category === "PENDING" ? "text-amber-800" : "text-red-800";
   return <p className={`mt-1 text-xs font-semibold ${tone}`}>
     {descriptions[delivery.category]} SMTP status {delivery.smtpStatus}; accepted {delivery.acceptedRecipientCount}, rejected {delivery.rejectedRecipientCount}, pending {delivery.pendingRecipientCount}.
+    {delivery.deliveredAt && <> Provider timestamp {formatDate(delivery.deliveredAt)}.</>}
+    {delivery.messageIdHash && <> Message reference {redactHash(delivery.messageIdHash)}.</>}
   </p>;
+}
+function redactHash(value: string) {
+  return `${value.slice(0, 8)}…${value.slice(-4)}`;
 }
 function formatDate(value: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));

@@ -70,24 +70,36 @@ adminRouter.get("/users/:id", async (req, res) => {
       id: String(event._id),
       event: event.event,
       createdAt: event.createdAt,
-      ...(event.event === "COUNSELLOR_INVITATION_SENT" || event.event === "COUNSELLOR_INVITATION_FAILED"
-        ? { delivery: safeDeliveryView(event.metadata) }
+      ...(["COUNSELLOR_INVITATION_SENT", "COUNSELLOR_INVITATION_FAILED"].includes(event.event)
+        ? optionalDeliveryView(event.metadata)
         : {}),
     })),
   });
 });
 
-function safeDeliveryView(metadata: Record<string, unknown>) {
-  const category = ["ACCEPTED", "REJECTED", "PENDING", "LOCAL_OUTBOX", "LOCAL_FAILURE"].includes(String(metadata.deliveryCategory))
-    ? String(metadata.deliveryCategory)
-    : "LOCAL_FAILURE";
+function optionalDeliveryView(metadata: unknown) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return {};
+  const value = metadata as Record<string, unknown>;
+  const category = ["ACCEPTED", "REJECTED", "PENDING", "LOCAL_OUTBOX", "LOCAL_FAILURE"].includes(String(value.deliveryCategory))
+    ? String(value.deliveryCategory)
+    : undefined;
+  if (!category) return {};
+  const deliveredAt = typeof value.deliveredAt === "string" && !Number.isNaN(Date.parse(value.deliveredAt))
+    ? value.deliveredAt
+    : undefined;
+  const messageIdHash = typeof value.messageIdHash === "string" && /^[a-f\d]{64}$/i.test(value.messageIdHash)
+    ? value.messageIdHash.toLowerCase()
+    : undefined;
   return {
-    category,
-    acceptedRecipientCount: safeCount(metadata.acceptedRecipientCount),
-    rejectedRecipientCount: safeCount(metadata.rejectedRecipientCount),
-    pendingRecipientCount: safeCount(metadata.pendingRecipientCount),
-    smtpStatus: /^\d{3}$|^(?:LOCAL|UNKNOWN)$/.test(String(metadata.smtpStatus)) ? String(metadata.smtpStatus) : "UNKNOWN",
-    deliveredAt: typeof metadata.deliveredAt === "string" ? metadata.deliveredAt : undefined,
+    delivery: {
+      category,
+      acceptedRecipientCount: safeCount(value.acceptedRecipientCount),
+      rejectedRecipientCount: safeCount(value.rejectedRecipientCount),
+      pendingRecipientCount: safeCount(value.pendingRecipientCount),
+      smtpStatus: /^\d{3}$|^(?:LOCAL|UNKNOWN)$/.test(String(value.smtpStatus)) ? String(value.smtpStatus) : "UNKNOWN",
+      ...(deliveredAt ? { deliveredAt } : {}),
+      ...(messageIdHash ? { messageIdHash } : {}),
+    },
   };
 }
 

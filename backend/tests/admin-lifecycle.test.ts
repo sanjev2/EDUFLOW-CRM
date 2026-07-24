@@ -53,6 +53,69 @@ describe("administrator user lifecycle", () => {
     await adminRequest(student, "get", `/api/v1/admin/users/${admin.user._id}`).expect(403);
   });
 
+  it("loads every supported account state and tolerates legacy invitation audit metadata", async () => {
+    const admin = await identity("ADMIN");
+    const pendingCounsellor = await identity("COUNSELLOR", { verified: false });
+    const pendingStudent = await identity("STUDENT", { verified: false });
+    const verifiedStudent = await identity("STUDENT");
+    await AuditLog.collection.insertOne({
+      event: "COUNSELLOR_INVITATION_SENT",
+      subjectId: pendingCounsellor.user._id,
+      metadata: null,
+      createdAt: new Date("2026-07-24T10:00:00.000Z"),
+    });
+    await AuditLog.create({
+      event: "COUNSELLOR_INVITATION_SENT",
+      subjectId: pendingCounsellor.user._id,
+      metadata: {
+        deliveryCategory: "ACCEPTED",
+        acceptedRecipientCount: 1,
+        rejectedRecipientCount: 0,
+        pendingRecipientCount: 0,
+        smtpStatus: "250",
+        deliveredAt: "2026-07-24T11:00:00.000Z",
+        messageIdHash: "c".repeat(64),
+        recipient: "must-not-be-returned@example.test",
+        invitationUrl: "http://localhost:3100/accept-invitation?secret=must-not-be-returned",
+      },
+    });
+
+    for (const target of [pendingCounsellor.user, pendingStudent.user, verifiedStudent.user, admin.user]) {
+      const response = await adminRequest(admin, "get", `/api/v1/admin/users/${target._id}`).expect(200);
+      expect(response.body.user.id).toBe(String(target._id));
+      expect(JSON.stringify(response.body)).not.toMatch(/passwordHash|tokenHash|csrfHash|mfaSecret|recoveryCode|storedFilename|integrityHash|must-not-be-returned/i);
+    }
+    const counsellorDetails = await adminRequest(admin, "get", `/api/v1/admin/users/${pendingCounsellor.user._id}`).expect(200);
+    const invitationEvents = counsellorDetails.body.recentEvents.filter((event: { event: string }) => event.event === "COUNSELLOR_INVITATION_SENT");
+    expect(invitationEvents).toHaveLength(2);
+    expect(invitationEvents.some((event: { delivery?: unknown }) => event.delivery === undefined)).toBe(true);
+    expect(invitationEvents.find((event: { delivery?: { category?: string } }) => event.delivery?.category === "ACCEPTED")?.delivery).toMatchObject({
+      acceptedRecipientCount: 1,
+      rejectedRecipientCount: 0,
+      pendingRecipientCount: 0,
+      smtpStatus: "250",
+      deliveredAt: "2026-07-24T11:00:00.000Z",
+      messageIdHash: "c".repeat(64),
+    });
+  });
+
+  it("returns safe errors for invalid targets and enforces session, MFA and role boundaries", async () => {
+    const admin = await identity("ADMIN");
+    const student = await identity("STUDENT");
+    const counsellor = await identity("COUNSELLOR");
+    const invalid = await adminRequest(admin, "get", "/api/v1/admin/users/not-an-object-id").expect(400);
+    expect(invalid.body.error.code).toBe("VALIDATION_ERROR");
+    const missing = await adminRequest(admin, "get", "/api/v1/admin/users/000000000000000000000000").expect(404);
+    expect(missing.body.error.code).toBe("USER_NOT_FOUND");
+    await adminRequest(student, "get", `/api/v1/admin/users/${admin.user._id}`).expect(403);
+    await adminRequest(counsellor, "get", `/api/v1/admin/users/${admin.user._id}`).expect(403);
+    await request(app).get(`/api/v1/admin/users/${student.user._id}`).set("Origin", "http://localhost:3100").expect(401);
+    const noMfa = await identity("ADMIN", { mfa: false });
+    await adminRequest(noMfa, "get", `/api/v1/admin/users/${student.user._id}`).expect(403);
+    await Session.updateOne({ userId: admin.user._id }, { expiresAt: new Date(Date.now() - 1000) });
+    await adminRequest(admin, "get", `/api/v1/admin/users/${student.user._id}`).expect(401);
+  });
+
   it("corrects only a full name, rejects mass assignment and audits the change", async () => {
     const admin = await identity("ADMIN"); const student = await identity("STUDENT");
     await adminRequest(admin, "patch", `/api/v1/admin/users/${student.user._id}/profile`, { fullName: "Corrected Student", reason }).expect(200);

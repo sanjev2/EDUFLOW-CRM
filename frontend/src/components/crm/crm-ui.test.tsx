@@ -286,7 +286,7 @@ describe("EduFlow CRM interface", () => {
         recentEvents: [
           {
             id: "e1", event: "COUNSELLOR_INVITATION_SENT", createdAt: "2026-07-24T10:00:00.000Z",
-            delivery: { category: "ACCEPTED", acceptedRecipientCount: 1, rejectedRecipientCount: 0, pendingRecipientCount: 0, smtpStatus: "250", deliveredAt: "2026-07-24T10:00:00.000Z" },
+            delivery: { category: "ACCEPTED", acceptedRecipientCount: 1, rejectedRecipientCount: 0, pendingRecipientCount: 0, smtpStatus: "250", deliveredAt: "2026-07-24T10:00:00.000Z", messageIdHash: "abcdef12".padEnd(60, "0") + "3456" },
           },
         ],
       });
@@ -297,6 +297,8 @@ describe("EduFlow CRM interface", () => {
     expect(screen.getByText("COUNSELLOR INVITATION SENT")).toBeInTheDocument();
     expect(screen.getByText(/Accepted by email provider/)).toHaveTextContent("Inbox placement is not guaranteed");
     expect(screen.getByText(/Accepted by email provider/)).toHaveTextContent("accepted 1, rejected 0, pending 0");
+    expect(screen.getByText(/Accepted by email provider/)).toHaveTextContent("Provider timestamp");
+    expect(screen.getByText(/Accepted by email provider/)).toHaveTextContent("abcdef12…3456");
     const cancel = screen.getByRole("button", { name: "Cancel pending invitation" });
     expect(cancel).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Mandatory audit reason"), { target: { value: "Valid cancellation reason" } });
@@ -331,5 +333,75 @@ describe("EduFlow CRM interface", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save name correction" }));
     expect(await screen.findByRole("status")).toHaveTextContent("Account updated");
     expect(detailLoads).toBeGreaterThanOrEqual(2);
+  });
+
+  it("stops loading on failure, retries successfully and ignores a stale user response", async () => {
+    let firstFinish!: (value: Response) => void;
+    let attempts = 0;
+    let retryAttempts = 0;
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (!url.includes("/admin/users/")) return response({});
+      attempts += 1;
+      if (attempts === 1) {
+        return new Promise<Response>((resolve) => { firstFinish = resolve; });
+      }
+      if (url.endsWith("/u2")) {
+        return response({
+          user: { id: "u2", fullName: "Current User", email: "current@example.test", role: "STUDENT", status: "ACTIVE", emailVerified: true, mfaEnabled: false, createdAt: "2026-07-24T10:00:00.000Z", passwordExpired: false },
+          summary: { activeSessions: 0, documentCount: 0, caseload: 0 },
+          recentEvents: [],
+        });
+      }
+      if (url.endsWith("/u3")) {
+        retryAttempts += 1;
+        if (retryAttempts > 1) return response({
+          user: { id: "u3", fullName: "Retried User", email: "retry@example.test", role: "STUDENT", status: "ACTIVE", emailVerified: false, mfaEnabled: false, createdAt: "2026-07-24T10:00:00.000Z", passwordExpired: false },
+          summary: { activeSessions: 0, documentCount: 0, caseload: 0 },
+          recentEvents: [],
+        });
+      }
+      return Promise.resolve({
+        ok: false, status: 500,
+        json: () => Promise.resolve({ error: { code: "INTERNAL_ERROR", message: "An unexpected error occurred" } }),
+      } as Response);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const view = render(<AdminUserDetail userId="u1" onClose={vi.fn()} onChanged={vi.fn(async () => undefined)} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Loading user details");
+    view.rerender(<AdminUserDetail userId="u2" onClose={vi.fn()} onChanged={vi.fn(async () => undefined)} />);
+    expect(await screen.findByText("Current User")).toBeInTheDocument();
+    firstFinish(await response({
+      user: { id: "u1", fullName: "Stale User" }, summary: {}, recentEvents: [],
+    }));
+    await waitFor(() => expect(screen.queryByText("Stale User")).not.toBeInTheDocument());
+
+    view.rerender(<AdminUserDetail userId="u3" onClose={vi.fn()} onChanged={vi.fn(async () => undefined)} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("User details could not be loaded");
+    expect(screen.queryByText("Loading user details…")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(screen.getByRole("status")).toHaveTextContent("Loading user details");
+    expect(await screen.findByText("Retried User")).toBeInTheDocument();
+  });
+
+  it("returns focus to the originating View details button and supports reopening", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) return response({ user: { role: "ADMIN", status: "ACTIVE", mfaEnabled: true }, passwordExpired: false, mfaComplete: true });
+      if (url.endsWith("/admin/users/u1")) return response({
+        user: { id: "u1", fullName: "Focus User", email: "focus@example.test", role: "STUDENT", status: "ACTIVE", emailVerified: true, mfaEnabled: false, createdAt: "2026-07-24T10:00:00.000Z", passwordExpired: false },
+        summary: { activeSessions: 0, documentCount: 0, caseload: 0 }, recentEvents: [],
+      });
+      return response({ users: [{ _id: "u1", fullName: "Focus User", email: "focus@example.test", role: "STUDENT", status: "ACTIVE", emailVerifiedAt: "2026-07-24", mfaEnabled: false }] });
+    }));
+    render(<AdminUsers />);
+    const trigger = await screen.findByRole("button", { name: "View details" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    expect(await screen.findByText("Focus User", { selector: "p.font-semibold" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(trigger).toHaveFocus());
+    fireEvent.click(trigger);
+    expect(await screen.findByRole("dialog", { name: "User details" })).toBeInTheDocument();
   });
 });
