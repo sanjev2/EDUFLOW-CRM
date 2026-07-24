@@ -1,0 +1,82 @@
+name: Security checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Check tracked paths and high-confidence secret patterns
+        run: node scripts/check-repository-security.mjs
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=critical
+
+      - name: Validate Compose configuration
+        env:
+          MONGODB_ROOT_USERNAME: ci-user
+          MONGODB_ROOT_PASSWORD: ci-mongodb-password-not-secret
+          SESSION_SECRET: ci-session-secret-at-least-thirty-two-characters
+          FIELD_ENCRYPTION_KEY: ci-encryption-key-at-least-thirty-two-chars
+          PASSWORD_PEPPER: ci-password-pepper-not-secret
+          SMTP_HOST: smtp.example.invalid
+          SMTP_PORT: "587"
+          SMTP_SECURE: "false"
+          SMTP_USER: ci@example.invalid
+          SMTP_PASSWORD: ci-smtp-password-not-secret
+          EMAIL_FROM_ADDRESS: ci@example.invalid
+        run: docker compose config --quiet
+
+  containers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Validate backend image build
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: false
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Validate frontend image build
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: frontend/Dockerfile
+          push: false
+          build-args: NEXT_PUBLIC_API_URL=http://localhost:5001/api/v1
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
