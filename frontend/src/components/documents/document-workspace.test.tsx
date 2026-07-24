@@ -20,6 +20,7 @@ beforeEach(() => {
 describe("private document workspace", () => {
   it("shows the file policy and useful loading and empty states", async () => {
     render(<DocumentWorkspace role="STUDENT" />);
+    expect(screen.getByRole("button", { name: "Upload" })).toBeDisabled();
     expect(screen.getByText("Loading private documents…")).toBeInTheDocument();
     expect(screen.getByText(/PDF, JPEG or PNG only. Maximum 5 MB/i)).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "No documents yet" })).toBeInTheDocument();
@@ -32,6 +33,30 @@ describe("private document workspace", () => {
     fireEvent.change(input, { target: { files: [new File(["<html>"], "unsafe.html", { type: "text/html" })] } });
     fireEvent.submit(screen.getByRole("button", { name: "Upload" }).closest("form")!);
     expect(await screen.findByRole("alert")).toHaveTextContent(/non-empty file|PDF, JPEG or PNG/i);
+  });
+
+  it("clears an earlier validation error after a successful OTHER screenshot upload", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/auth/csrf")) return response({ csrfToken: "test-csrf" });
+      if (url.includes("/documents") && options?.method === "POST") return response({ document: documentItem }, true, 201);
+      if (url.includes("/applications/current")) return response({ application: null });
+      return response({ documents: [] });
+    }));
+    render(<DocumentWorkspace role="STUDENT" />);
+    await screen.findByRole("heading", { name: "No documents yet" });
+    const input = screen.getByLabelText("Select file");
+    const form = screen.getByRole("button", { name: "Upload" }).closest("form")!;
+    fireEvent.change(input, { target: { files: [new File(["bad"], "unsafe.html", { type: "text/html" })] } });
+    fireEvent.submit(form);
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Document category"), { target: { value: "OTHER" } });
+    fireEvent.change(input, { target: { files: [new File(["png"], "screenshot.png", { type: "image/png" })] } });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.submit(form);
+    expect(await screen.findByRole("status")).toHaveTextContent("Document uploaded securely.");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Upload" })).toBeDisabled();
   });
 
   it("renders role-appropriate actions without a public file URL", async () => {

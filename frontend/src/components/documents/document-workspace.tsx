@@ -17,6 +17,8 @@ export function DocumentWorkspace({ role, studentId }: { role: Role; studentId?:
   const [applicationId, setApplicationId] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File>();
+  const [uploadError, setUploadError] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -60,13 +62,14 @@ export function DocumentWorkspace({ role, studentId }: { role: Role; studentId?:
   }
 
   async function upload(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setError(""); setMessage("");
-    const form = new FormData(event.currentTarget);
-    const file = form.get("file");
+    event.preventDefault(); setError(""); setUploadError(""); setMessage("");
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const file = selectedFile;
     const category = String(form.get("category") ?? "");
-    if (!(file instanceof File)) return setError("Choose a file to upload.");
+    if (!file) return setUploadError("Choose a file to upload.");
     const validation = validate(file);
-    if (validation) return setError(validation);
+    if (validation) return setUploadError(validation);
     setBusy(true);
     try {
       await refreshCsrf();
@@ -80,10 +83,12 @@ export function DocumentWorkspace({ role, studentId }: { role: Role; studentId?:
         },
       });
       setMessage("Document uploaded securely.");
-      event.currentTarget.reset();
+      setUploadError("");
+      formElement.reset();
+      setSelectedFile(undefined);
       await load();
     } catch (uploadError) {
-      setError(uploadError instanceof Error ? uploadError.message : "The document could not be uploaded.");
+      setUploadError(uploadError instanceof Error ? uploadError.message : "The document could not be uploaded.");
     } finally { setBusy(false); }
   }
 
@@ -117,9 +122,10 @@ export function DocumentWorkspace({ role, studentId }: { role: Role; studentId?:
     {role === "STUDENT" && <Panel title="Upload a document">
       <form onSubmit={upload} className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
         <label className="grid gap-1.5 text-sm font-semibold">Document category<select name="category" required className="min-h-11 rounded-lg border border-[var(--border)] bg-white px-3">{categories.map((category) => <option key={category} value={category}>{category.replaceAll("_", " ")}</option>)}</select></label>
-        <label className="grid gap-1.5 text-sm font-semibold">Select file<input name="file" type="file" required accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" className="min-h-11 rounded-lg border border-[var(--border)] bg-white p-2 text-sm" /></label>
-        <PrimaryButton disabled={busy} className="inline-flex items-center justify-center gap-2"><Upload aria-hidden size={18} />{busy ? "Uploading…" : "Upload"}</PrimaryButton>
+        <label className="grid gap-1.5 text-sm font-semibold">Select file<input name="file" type="file" required accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" onChange={(event) => { setSelectedFile(event.currentTarget.files?.[0]); setUploadError(""); }} className="min-h-11 rounded-lg border border-[var(--border)] bg-white p-2 text-sm" /></label>
+        <PrimaryButton disabled={busy || !selectedFile} className="inline-flex items-center justify-center gap-2"><Upload aria-hidden size={18} />{busy ? "Uploading…" : "Upload"}</PrimaryButton>
       </form>
+      {uploadError && <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-800">{uploadError}</p>}
       <p className="mt-4 text-sm text-[var(--muted)]">PDF, JPEG or PNG only. Maximum 5 MB. Files are private and checked by type and file signature.</p>
     </Panel>}
     <Panel title={role === "ADMIN" ? "Document oversight" : "Documents"}>

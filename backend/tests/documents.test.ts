@@ -1,5 +1,6 @@
 import request from "supertest";
 import mongoose from "mongoose";
+import { deflateSync } from "node:zlib";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -13,6 +14,7 @@ import { AuditLog } from "../src/models/AuditLog.js";
 import { hashPassword } from "../src/security/password.js";
 import { randomToken, sha256 } from "../src/security/crypto.js";
 import { config } from "../src/config.js";
+import { validateFile } from "../src/documents/storage.js";
 
 beforeAll(async () => { expect(process.env.MONGODB_URI).toMatch(/eduflow_crm_test$/); if (!mongoose.connection.readyState) await mongoose.connect(process.env.MONGODB_URI!); });
 beforeEach(async () => { await mongoose.connection.db!.dropDatabase(); await Promise.all(Object.values(mongoose.models).map((model) => model.syncIndexes())); await rm(config.UPLOAD_ROOT, { recursive: true, force: true }); });
@@ -27,9 +29,67 @@ async function identity(role: Role, status: "ACTIVE" | "SUSPENDED" = "ACTIVE") {
   return { user, cookie: `eduflow_session=${token}`, csrf };
 }
 
-const pdf = Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n");
-const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0xff, 0xd9]);
-const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.alloc(4), Buffer.from("IHDR"), Buffer.alloc(17), Buffer.alloc(4), Buffer.from("IEND"), Buffer.alloc(4)]);
+const crcTable = Array.from({ length: 256 }, (_, value) => {
+  let crc = value;
+  for (let bit = 0; bit < 8; bit += 1) crc = (crc & 1) ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1;
+  return crc >>> 0;
+});
+function crc32(buffer: Buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) crc = crcTable[(crc ^ byte) & 0xff]! ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+function pngChunk(type: string, data = Buffer.alloc(0)) {
+  const name = Buffer.from(type, "ascii");
+  const length = Buffer.alloc(4); length.writeUInt32BE(data.length);
+  const checksum = Buffer.alloc(4); checksum.writeUInt32BE(crc32(Buffer.concat([name, data])));
+  return Buffer.concat([length, name, data, checksum]);
+}
+function generatedPng(options: { metadata?: boolean; incidentalMz?: boolean; visibleTextPixels?: boolean } = {}) {
+  const width = 96; const height = 54;
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; ihdr[9] = 6;
+  const raw = Buffer.alloc(height * (1 + width * 4));
+  for (let y = 0; y < height; y += 1) {
+    const row = y * (1 + width * 4); raw[row] = 0;
+    for (let x = 0; x < width; x += 1) {
+      const pixel = row + 1 + x * 4;
+      raw[pixel] = (x * 3 + y) & 0xff; raw[pixel + 1] = (x + y * 5) & 0xff; raw[pixel + 2] = 180; raw[pixel + 3] = 255;
+    }
+  }
+  if (options.visibleTextPixels) Buffer.from("Ordinary screenshot text").copy(raw, 256);
+  if (options.incidentalMz) { raw[512] = 0x4d; raw[513] = 0x5a; }
+  const metadata = options.metadata ? [
+    pngChunk("sRGB", Buffer.from([0])),
+    pngChunk("pHYs", Buffer.from([0, 0, 14, 196, 0, 0, 14, 196, 1])),
+    pngChunk("tEXt", Buffer.from("Software\0Microsoft Windows screenshot", "latin1")),
+  ] : [];
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk("IHDR", ihdr),
+    ...metadata,
+    pngChunk("IDAT", deflateSync(raw, options.incidentalMz ? { level: 0 } : undefined)),
+    pngChunk("IEND"),
+  ]);
+}
+function generatedJpeg() {
+  const base = Buffer.from("/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABBQJ//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPwF//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPwF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQAGPwJ//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPyF//9oADAMBAAIAAwAAABD/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/EB//xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/EB//xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/EB//2Q==", "base64");
+  const exif = Buffer.from("Exif\0\0Generated camera metadata", "latin1");
+  const app1Length = Buffer.alloc(2); app1Length.writeUInt16BE(exif.length + 2);
+  return Buffer.concat([base.subarray(0, 2), Buffer.from([0xff, 0xe1]), app1Length, exif, base.subarray(2)]);
+}
+function generatedPdf(streamText = "Harmless compressed text") {
+  const stream = deflateSync(Buffer.from(streamText), { level: 0 });
+  return Buffer.concat([
+    Buffer.from(`%PDF-1.4\n1 0 obj\n<< /Length ${stream.length} /Filter /FlateDecode >>\nstream\n`),
+    stream,
+    Buffer.from("\nendstream\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n"),
+  ]);
+}
+const pdf = generatedPdf();
+const jpeg = generatedJpeg();
+const png = generatedPng();
 
 function upload(auth: Awaited<ReturnType<typeof identity>>, body: Buffer, filename: string, mime: string, category = "PASSPORT") {
   return request(app).post("/api/v1/documents").set("Cookie", auth.cookie).set("Origin", "http://localhost:3100").set("x-csrf-token", auth.csrf).set("x-document-category", category).set("x-file-name", encodeURIComponent(filename)).set("Content-Type", mime).send(body);
@@ -51,6 +111,37 @@ describe("private document validation and storage", () => {
     const student = await identity("STUDENT");
     await upload(student, Buffer.alloc(5 * 1024 * 1024 + 1, 1), "large.pdf", "application/pdf").expect(413);
     await upload(student, Buffer.alloc(0), "empty.pdf", "application/pdf").expect(400);
+  });
+
+  it("accepts realistic PNG screenshots and harmless compressed image bytes", async () => {
+    const student = await identity("STUDENT");
+    const standardMetadata = generatedPng({ metadata: true });
+    const windowsScreenshot = generatedPng({ metadata: true, visibleTextPixels: true });
+    const incidentalPattern = generatedPng({ incidentalMz: true });
+    expect(incidentalPattern.includes(Buffer.from("MZ"))).toBe(true);
+    validateFile(standardMetadata, "image/png", "standard.png");
+    validateFile(windowsScreenshot, "image/png", "windows-screenshot.png");
+    validateFile(incidentalPattern, "image/png", "compressed-bytes.png");
+    await upload(student, windowsScreenshot, "screenshot.png", "image/png", "OTHER").expect(201);
+  });
+
+  it("accepts JPEG metadata and harmless compressed PDF stream content", () => {
+    validateFile(generatedJpeg(), "image/jpeg", "photo.jpg");
+    const harmlessPdf = generatedPdf("Harmless endstream <script MZ /JavaScript-looking words inside compressed document content");
+    expect(harmlessPdf.includes(Buffer.from("<script"))).toBe(true);
+    validateFile(harmlessPdf, "application/pdf", "notes.pdf");
+  });
+
+  it.each([
+    ["PNG content appended after IEND", Buffer.concat([generatedPng(), Buffer.from("appended")]), "bad.png", "image/png"],
+    ["PNG/HTML polyglot", Buffer.concat([generatedPng(), Buffer.from("<html><script></script>")]), "bad.png", "image/png"],
+    ["PNG/SVG polyglot", Buffer.concat([generatedPng(), Buffer.from("<svg onload=alert(1)>")]), "bad.png", "image/png"],
+    ["truncated PNG", generatedPng().subarray(0, -5), "bad.png", "image/png"],
+    ["truncated JPEG", generatedJpeg().subarray(0, -2), "bad.jpg", "image/jpeg"],
+    ["JPEG appended active content", Buffer.concat([generatedJpeg(), Buffer.from("<script>alert(1)</script>")]), "bad.jpg", "image/jpeg"],
+    ["PDF JavaScript action", Buffer.from("%PDF-1.4\n1 0 obj\n<< /OpenAction 2 0 R >>\nendobj\n2 0 obj\n<< /S /JavaScript /JS (app.alert) >>\nendobj\n%%EOF\n"), "bad.pdf", "application/pdf"],
+  ])("rejects %s", (_description, body, filename, mime) => {
+    expect(() => validateFile(body, mime, filename)).toThrow();
   });
 
   it("rejects forbidden, double-extension, spoofed MIME and mismatched signatures", async () => {
