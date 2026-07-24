@@ -13,4 +13,6 @@ The foundation and authentication stages are complete. The current CRM stage add
 - AI, WhatsApp and university APIs
 - Deployment
 - Formal penetration testing before feature completion
-- Secure document uploads, which remain a separate next-stage workflow
+- Private local document upload, authenticated download and role-aware document oversight
+
+The implemented document stage is intentionally local: it does not include cloud storage, OCR, AI, payments or malware scanning.

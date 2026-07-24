@@ -30,5 +30,7 @@
 - Added deterministic least-workload automatic assignment with unique active-assignment protection and a no-counsellor operational alert.
 - Added idempotent 24-hour enquiry follow-up tasks, internal plain-text notes and role-safe task workflows.
 - Added role-specific dashboard summaries and original responsive EduFlow application shell.
+- Added private local PDF/JPEG/PNG document storage with 5 MB limits, signature validation, cryptographically random storage keys, hash verification, authenticated delivery and cleanup-safe security tests.
+- Added student document management, assigned-counsellor document context and audited administrator oversight. No malware scanner is included; hardened production storage, backups and scanning remain future deployment work.
 - Added student, counsellor and administrator CRM pages using the locked colour/token system.
 - Added CRM integration and interface tests. Secure documents, final landing redesign and formal penetration testing remain deferred.

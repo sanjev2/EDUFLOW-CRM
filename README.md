@@ -2,7 +2,7 @@
 
 EduFlow is a responsive, security-led web application foundation for one education consultancy. It will support student enquiries and applications for three roles: student, counsellor and administrator.
 
-This stage includes secure authentication, TOTP MFA, revocable server-side sessions, CSRF protection and deny-by-default role controls. CRM business workflows remain intentionally excluded.
+This stage includes secure authentication, role-aware CRM workflows and private local document handling for students, assigned counsellors and administrators.
 
 ## Requirements
 
@@ -19,6 +19,8 @@ This stage includes secure authentication, TOTP MFA, revocable server-side sessi
 
 Frontend: `http://localhost:3100`
 API: `http://localhost:5001/api/health`
+
+Private files are stored beneath the backend-controlled `UPLOAD_ROOT` (default `uploads`) and are never exposed as static files. PDF, JPEG and PNG files up to 5 MB are checked by extension, declared type and file signature. Local storage does not include a malware-scanning engine; production requires hardened storage, backups and malware scanning.
 
 ## Commands
 

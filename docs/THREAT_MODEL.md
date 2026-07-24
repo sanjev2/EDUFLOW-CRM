@@ -21,6 +21,10 @@ The browser is untrusted. The API validates every request and mediates access to
 
 Strict Zod input schemas, Argon2id password hashing, generic identity responses, hashed expiring tokens, combined account/IP controls, lockout, CAPTCHA, encrypted TOTP, hashed recovery codes, opaque sessions, session-bound CSRF, deny-by-default role middleware, structured audit events and session revocation.
 
+### Private-document threats and controls
+
+Document controls address malicious content, MIME spoofing, double extensions, oversized bodies, path traversal, symbolic-link escape, predictable object names, direct-object-reference attacks and public caching. The server checks extension, declared type and signature, limits files to 5 MB, stores random names inside a canonical private root, verifies SHA-256 integrity on download and returns inaccessible and nonexistent resources through the same generic response. Counsellor access depends on the current assignment record; administrator access is explicit, MFA-backed and audited. Malware scanning, off-host backups and production storage isolation remain deployment-stage requirements.
+
 ## Residual risks
 
 - The in-process throttle decision uses MongoDB attempt records and has not yet been validated under distributed deployment.

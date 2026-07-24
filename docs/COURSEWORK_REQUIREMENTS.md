@@ -16,4 +16,7 @@
 | Application workflow | Server state machine and immutable stage history | Complete for CRM stage | Application timeline/API | Transition and cancellation tests |
 | Counsellor operations | Assignments, notes and follow-up tasks | Complete for CRM stage | Counsellor pages/API | IDOR and automation tests |
 | Administrator oversight | Safe summaries, assignment, audit and alert views | Complete for CRM stage | Administrator pages/API | Role and reason tests |
+| Private document workflow | Student upload/management, assigned-counsellor access and audited administrator oversight | Implemented | `/documents`, assigned student documents, `/admin/documents`, authenticated document API | Signature, IDOR, CSRF, traversal, delivery and deletion tests |
+
+Document security testing covers policy validation and access controls in the automated suite. Wider penetration and deployment security testing remains a separate final coursework stage.
 | Secure documents | Private upload workflow | Not implemented | Future document design | Future upload/access tests |
