@@ -16,6 +16,9 @@ export const errorHandler: ErrorRequestHandler = (error: unknown, req, res, _nex
   void _next;
   let apiError = error instanceof ApiError ? error : new ApiError(500, "INTERNAL_ERROR", "An unexpected error occurred");
   if (error instanceof ZodError) apiError = new ApiError(400, "VALIDATION_ERROR", "Request validation failed", error.flatten());
+  if (typeof error === "object" && error !== null && "type" in error && error.type === "entity.too.large") {
+    apiError = new ApiError(413, "PAYLOAD_TOO_LARGE", "The request body exceeds the allowed size");
+  }
   if (apiError.status >= 500) logger.error({ err: error, requestId: req.id }, "Request failed");
   res.status(apiError.status).json({
     error: {

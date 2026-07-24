@@ -16,30 +16,10 @@ import { audit } from "../security/audit.js";
 import { assignLeastLoaded, validateCounsellor } from "../crm/assignment.js";
 import { assertForwardTransition, canStudentCancel } from "../crm/application-state.js";
 import { pagination, requireAssignedStudent } from "../crm/access.js";
+import { profileSchema } from "../crm/profile-schema.js";
 
 export const crmRouter = Router();
 crmRouter.use(requireAuthentication, requireVerifiedEmail, requireCurrentPassword);
-
-const profileSchema = z.object({
-  phone: z.string().trim().min(7).max(24).optional(),
-  dateOfBirth: z.coerce.date().max(new Date()).optional(),
-  addressLine: z.string().trim().max(180).optional(),
-  city: z.string().trim().max(80).optional(),
-  province: z.string().trim().max(80).optional(),
-  country: z.string().trim().min(2).max(80).default("Nepal"),
-  highestQualification: z.string().trim().max(100).optional(),
-  institutionName: z.string().trim().max(140).optional(),
-  completionYear: z.number().int().min(1950).max(2100).optional(),
-  resultType: z.enum(["GPA", "PERCENTAGE"]).optional(),
-  resultValue: z.number().min(0).max(100).optional(),
-  englishTestType: z.enum(["IELTS", "PTE", "DUOLINGO", "NONE"]).default("NONE"),
-  englishTestScore: z.number().min(0).max(200).optional(),
-  preferredCountry: z.string().trim().max(80).optional(),
-  preferredStudyLevel: z.string().trim().max(80).optional(),
-  intendedIntake: z.string().trim().max(80).optional(),
-  previousVisaRefusal: z.boolean().optional(),
-  refusalExplanation: z.string().trim().max(500).optional(),
-}).strict();
 
 crmRouter.get("/profile", requireRole("STUDENT"), async (req, res) => {
   const profile = await StudentProfile.findOne({ userId: req.auth!.user._id });
