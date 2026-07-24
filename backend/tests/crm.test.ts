@@ -1,14 +1,17 @@
 import request from "supertest";
 import mongoose from "mongoose";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../src/app.js";
 import { roles, User, type Role } from "../src/models/User.js";
 import { Session } from "../src/models/Session.js";
 import { CounsellorAssignment } from "../src/models/CounsellorAssignment.js";
 import { Application } from "../src/models/Application.js";
 import { ApplicationStageHistory } from "../src/models/ApplicationStageHistory.js";
+import { AuditLog } from "../src/models/AuditLog.js";
+import { Document } from "../src/models/Document.js";
+import { StudentProfile } from "../src/models/StudentProfile.js";
 import { Task } from "../src/models/Task.js";
-import { SecurityAlert } from "../src/models/Security.js";
+import { IpAccessRule, SecurityAlert } from "../src/models/Security.js";
 import { hashPassword } from "../src/security/password.js";
 import { randomToken, sha256 } from "../src/security/crypto.js";
 
@@ -24,6 +27,13 @@ async function identity(role: Role, suffix = randomToken(4)) {
   return { user, cookie: `eduflow_session=${token}`, csrf };
 }
 const mutate = (method: "post"|"put"|"patch"|"delete", path: string, auth: Awaited<ReturnType<typeof identity>>) => request(app)[method](path).set("Cookie", auth.cookie).set("x-csrf-token", auth.csrf);
+async function readyApplication(student: Awaited<ReturnType<typeof identity>>, counsellor?: Awaited<ReturnType<typeof identity>>) {
+  await StudentProfile.create({ userId: student.user._id, highestQualification: "Bachelor", preferredCountry: "Australia", preferredStudyLevel: "Master", intendedIntake: "2027" });
+  const application = await Application.create({ studentId: student.user._id, stage: "DOCUMENTS_PENDING", active: true, preferredCountry: "Australia", preferredStudyLevel: "Master", intendedIntake: "2027" });
+  await Document.create({ ownerId: student.user._id, applicationId: application._id, category: "OTHER", originalFilename: "evidence.png", storedFilename: `${randomToken()}.png`, detectedMimeType: "image/png", size: 100, integrityHash: sha256("fixture"), uploadedBy: student.user._id });
+  if (counsellor) await CounsellorAssignment.create({ studentId: student.user._id, counsellorId: counsellor.user._id, assignedBy: student.user._id, reason: "Submission test assignment" });
+  return application;
+}
 
 describe("CRM profile ownership", () => {
   it("lets a student create and read only their profile with server completion", async () => {
@@ -83,6 +93,88 @@ describe("enquiry, assignment and state history", () => {
   });
 });
 
+describe("secure application submission transaction", () => {
+  const key = "coursework_submission_key_123456789";
+  const submit = (auth: Awaited<ReturnType<typeof identity>>, requestKey = key) =>
+    mutate("post", "/api/v1/crm/applications/current/submit", auth).set("idempotency-key", requestKey).send({ confirm: true });
+
+  it("atomically submits an owned ready application and returns a safe no-store receipt", async () => {
+    const student = await identity("STUDENT"); const counsellor = await identity("COUNSELLOR");
+    const application = await readyApplication(student, counsellor);
+    const result = await submit(student).expect(201).expect("Cache-Control", /no-store/);
+    expect(result.body.duplicate).toBe(false);
+    expect(result.body.receipt).toMatchObject({ stage: "APPLICATION_SUBMITTED" });
+    expect(result.body.receipt.reference).toMatch(/^EDF-\d{8}-[A-Z0-9_-]+$/);
+    expect(result.body.receipt.integrity).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(result.body)).not.toMatch(/secret|idempotencyKeyHash/i);
+    const current = await request(app).get("/api/v1/crm/applications/current").set("Cookie", student.cookie).expect(200);
+    expect(JSON.stringify(current.body)).not.toMatch(/idempotencyKeyHash/i);
+    const stored = await Application.findById(application._id);
+    expect(stored?.stage).toBe("APPLICATION_SUBMITTED");
+    expect(await ApplicationStageHistory.countDocuments({ transactionReference: result.body.receipt.reference })).toBe(1);
+    expect(await AuditLog.countDocuments({ event: "APPLICATION_SUBMISSION_TRANSACTION", transactionReference: result.body.receipt.reference })).toBe(1);
+    expect(await Task.countDocuments({ automationKey: `application-submission:${result.body.receipt.reference}` })).toBe(1);
+  });
+
+  it("requires CSRF, explicit confirmation and a valid idempotency key", async () => {
+    const student = await identity("STUDENT"); await readyApplication(student);
+    await request(app).post("/api/v1/crm/applications/current/submit").set("Cookie", student.cookie).set("idempotency-key", key).send({ confirm: true }).expect(403);
+    await mutate("post", "/api/v1/crm/applications/current/submit", student).send({ confirm: true }).expect(400);
+    await submit(student, "short").expect(400);
+    await mutate("post", "/api/v1/crm/applications/current/submit", student).set("idempotency-key", key).send({ confirm: false }).expect(400);
+  });
+
+  it("returns the original receipt for duplicate and concurrent requests without duplicate effects", async () => {
+    const student = await identity("STUDENT"); const counsellor = await identity("COUNSELLOR"); await readyApplication(student, counsellor);
+    const [first, second] = await Promise.all([submit(student), submit(student)]);
+    expect([first.status, second.status].sort()).toEqual([200, 201]);
+    expect(first.body.receipt.reference).toBe(second.body.receipt.reference);
+    expect(await ApplicationStageHistory.countDocuments()).toBe(1);
+    expect(await AuditLog.countDocuments({ event: "APPLICATION_SUBMISSION_TRANSACTION" })).toBe(1);
+    expect(await Task.countDocuments({ automationKey: /^application-submission:/ })).toBe(1);
+    await submit(student, "different_submission_key_123456789").expect(409);
+  });
+
+  it("denies wrong roles, suspended users and ineligible or incomplete applications", async () => {
+    const student = await identity("STUDENT"); const other = await identity("STUDENT"); const counsellor = await identity("COUNSELLOR"); const admin = await identity("ADMIN");
+    await readyApplication(student);
+    await submit(other).expect(404);
+    await submit(counsellor).expect(403);
+    await submit(admin).expect(403);
+    const early = await identity("STUDENT", "early-submit");
+    await Application.create({ studentId: early.user._id, stage: "COUNSELLING", active: true });
+    await submit(early).expect(409);
+    const incomplete = await identity("STUDENT", "incomplete-submit");
+    await Application.create({ studentId: incomplete.user._id, stage: "DOCUMENTS_PENDING", active: true });
+    await submit(incomplete).expect(422);
+    student.user.status = "SUSPENDED"; await student.user.save();
+    await submit(student).expect(401);
+  });
+
+  it("preserves the atomic receipt and safely reconciles after an intermediate side-effect failure", async () => {
+    const student = await identity("STUDENT"); await readyApplication(student);
+    const failure = vi.spyOn(ApplicationStageHistory, "updateOne").mockRejectedValueOnce(new Error("simulated"));
+    await submit(student).expect(503);
+    const committed = await Application.findOne({ studentId: student.user._id });
+    expect(committed?.stage).toBe("APPLICATION_SUBMITTED");
+    expect(committed?.submission?.reference).toBeTruthy();
+    failure.mockRestore();
+    const retry = await submit(student).expect(200);
+    expect(retry.body.receipt.reference).toBe(committed?.submission?.reference);
+    expect(await ApplicationStageHistory.countDocuments({ transactionReference: retry.body.receipt.reference })).toBe(1);
+    expect(await AuditLog.countDocuments({ transactionReference: retry.body.receipt.reference })).toBe(1);
+  });
+
+  it("rate limits repeated submission attempts without weakening idempotency", async () => {
+    const student = await identity("STUDENT"); await readyApplication(student);
+    await submit(student).expect(201);
+    for (let attempt = 0; attempt < 9; attempt += 1) await submit(student).expect(200);
+    await submit(student).expect(429);
+    expect(await ApplicationStageHistory.countDocuments()).toBe(1);
+    expect(await AuditLog.countDocuments({ event: "APPLICATION_SUBMISSION_TRANSACTION" })).toBe(1);
+  });
+});
+
 describe("admin assignments, notes, tasks and summaries", () => {
   it("allows admin assignment, denies non-admin and rejects suspended counsellors", async () => {
     const admin = await identity("ADMIN"); const student = await identity("STUDENT"); const counsellor = await identity("COUNSELLOR"); const otherStudent = await identity("STUDENT", "other");
@@ -119,5 +211,23 @@ describe("admin assignments, notes, tasks and summaries", () => {
     await request(app).post("/api/v1/crm/tasks").set("Cookie", counsellor.cookie).send({ title: "No CSRF", studentId: student.user._id, dueAt: new Date(), priority: "LOW" }).expect(403);
     const result = await request(app).get("/api/v1/crm/tasks?limit=999999&page=-4&sort=passwordHash").set("Cookie", counsellor.cookie).expect(200);
     expect(result.body.limit).toBe(50); expect(result.body.page).toBe(1);
+  });
+  it("validates, audits and consistently enforces administrator IP rules", async () => {
+    const admin = await identity("ADMIN"); const student = await identity("STUDENT");
+    await mutate("post", "/api/v1/admin/ip-rules", admin).send({ cidr: "not-a-network", action: "DENY", reason: "Invalid rule test" }).expect(400);
+    const created = await mutate("post", "/api/v1/admin/ip-rules", admin).send({ cidr: "203.0.113.0/24", action: "DENY", reason: "Block documented test network" }).expect(201);
+    expect((await request(app).get("/api/v1/admin/ip-rules").set("Cookie", admin.cookie).expect(200)).body.rules).toHaveLength(1);
+    await mutate("delete", `/api/v1/admin/ip-rules/${created.body.rule._id}`, admin).send({ reason: "Remove completed test rule" }).expect(204);
+    expect(await AuditLog.countDocuments({ event: { $in: ["IP_ACCESS_RULE_CREATED", "IP_ACCESS_RULE_REMOVED"] } })).toBe(2);
+
+    await IpAccessRule.create({ cidr: "127.0.0.1/32", action: "DENY", reason: "Local enforcement test" });
+    await request(app).get("/api/v1/access/student").set("Cookie", student.cookie).expect(403);
+    await request(app).get("/api/health").expect(200);
+    expect(await AuditLog.countDocuments({ event: "IP_ACCESS_DENIED" })).toBe(1);
+    await IpAccessRule.deleteMany({});
+
+    await IpAccessRule.create({ cidr: "203.0.113.5/32", action: "ALLOW", reason: "Allow-list default deny test" });
+    await request(app).get("/api/v1/access/student").set("Cookie", student.cookie).expect(403);
+    await IpAccessRule.deleteMany({});
   });
 });

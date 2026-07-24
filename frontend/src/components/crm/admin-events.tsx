@@ -1,9 +1,9 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Activity, AlertTriangle, ShieldCheck } from "lucide-react";
 import { AppShell } from "../app-shell";
 import { Badge, EmptyState, Panel } from "../dashboard-ui";
-import { api } from "@/lib/api";
+import { api, refreshCsrf } from "@/lib/api";
 
 export function AdminAuditLogs() {
   const [logs, setLogs] = useState<{ _id: string; event: string; actorId?: string; subjectId?: string; createdAt: string }[]>([]);
@@ -11,9 +11,17 @@ export function AdminAuditLogs() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   useEffect(() => {
-    setLoading(true); setError("");
-    void api<{ logs: typeof logs }>(`/api/v1/admin/audit-logs?limit=50${event ? `&event=${encodeURIComponent(event)}` : ""}`)
-      .then((result) => setLogs(result.logs)).catch((reason: Error) => setError(reason.message)).finally(() => setLoading(false));
+    let active = true;
+    const load = () => {
+      setError("");
+      void api<{ logs: typeof logs }>(`/api/v1/admin/audit-logs?limit=50${event ? `&event=${encodeURIComponent(event)}` : ""}`)
+        .then((result) => { if (active) setLogs(result.logs); })
+        .catch((reason: Error) => { if (active) setError(reason.message); })
+        .finally(() => { if (active) setLoading(false); });
+    };
+    setLoading(true); load();
+    const timer = window.setInterval(load, 30_000);
+    return () => { active = false; window.clearInterval(timer); };
   }, [event]);
   return <AppShell role="ADMIN" title="Audit logs" subtitle="Review append-only evidence of meaningful account, security and CRM events."><Panel title="Activity history">
     <div className="mb-5 flex flex-wrap items-end justify-between gap-3"><label className="grid w-full max-w-md gap-1.5 text-sm font-semibold">Filter by exact event<input value={event} onChange={(e) => setEvent(e.target.value)} className="min-h-11 rounded-xl border border-[var(--border)] px-3" placeholder="For example: LOGIN_SUCCESS" /></label><p className="text-sm text-[var(--muted)]">{logs.length} events shown</p></div>
@@ -27,10 +35,18 @@ export function AdminSecurityAlerts() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   useEffect(() => {
-    void api<{ alerts: typeof alerts }>("/api/v1/admin/security-alerts?limit=50")
-      .then((result) => setAlerts(result.alerts)).catch((reason: Error) => setError(reason.message)).finally(() => setLoading(false));
+    let active = true;
+    const load = () => {
+      void api<{ alerts: typeof alerts }>("/api/v1/admin/security-alerts?limit=50")
+        .then((result) => { if (active) setAlerts(result.alerts); })
+        .catch((reason: Error) => { if (active) setError(reason.message); })
+        .finally(() => { if (active) setLoading(false); });
+    };
+    load();
+    const timer = window.setInterval(load, 30_000);
+    return () => { active = false; window.clearInterval(timer); };
   }, []);
-  return <AppShell role="ADMIN" title="Security alerts" subtitle="Review recorded authentication and operational security signals."><Panel title="Alert feed">
+  return <AppShell role="ADMIN" title="Security alerts" subtitle="Review recorded authentication and operational security signals."><div className="grid gap-6"><Panel title="Alert feed">
     {error && <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}
     {loading ? <p role="status" className="py-5 text-sm text-[var(--muted)]">Loading security alerts…</p> : alerts.length ? <ul className="grid gap-3">{alerts.map((alert) => {
       const positive = alert.type === "MFA_ENABLED";
@@ -40,5 +56,50 @@ export function AdminSecurityAlerts() {
         {positive ? <Badge tone="success">Protection enabled</Badge> : <Badge tone={alert.severity === "HIGH" ? "danger" : alert.severity === "MEDIUM" ? "warning" : "info"}>{alert.severity}</Badge>}
       </li>;
     })}</ul> : <EmptyState title="No security alerts" description="No security alerts are currently recorded." />}
-  </Panel></AppShell>;
+  </Panel><IpRuleManager /></div></AppShell>;
+}
+
+type IpRule = { _id: string; cidr: string; action: "ALLOW" | "DENY"; reason: string; expiresAt?: string };
+function IpRuleManager() {
+  const [rules, setRules] = useState<IpRule[]>([]);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function load() {
+    const result = await api<{ rules: IpRule[] }>("/api/v1/admin/ip-rules");
+    setRules(result.rules ?? []);
+  }
+  useEffect(() => { void load().catch((reason: Error) => setError(reason.message)); }, []);
+  async function create(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setBusy(true); setError("");
+    const form = new FormData(event.currentTarget);
+    try {
+      await refreshCsrf();
+      await api("/api/v1/admin/ip-rules", { method: "POST", body: JSON.stringify({ cidr: form.get("cidr"), action: form.get("action"), reason: form.get("reason") }) });
+      event.currentTarget.reset();
+      await load();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Network rule could not be created."); }
+    finally { setBusy(false); }
+  }
+  async function remove(rule: IpRule) {
+    const reason = window.prompt(`Reason for removing ${rule.action} rule ${rule.cidr}`);
+    if (!reason) return;
+    setBusy(true); setError("");
+    try {
+      await refreshCsrf();
+      await api(`/api/v1/admin/ip-rules/${rule._id}`, { method: "DELETE", body: JSON.stringify({ reason }) });
+      await load();
+    } catch (failure) { setError(failure instanceof Error ? failure.message : "Network rule could not be removed."); }
+    finally { setBusy(false); }
+  }
+  return <Panel title="Network access rules">
+    <p className="mb-4 text-sm text-[var(--muted)]">DENY rules take priority. When any ALLOW rule exists, other networks are denied. Confirm your current network before adding an ALLOW rule.</p>
+    {error && <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-800">{error}</p>}
+    <form onSubmit={create} className="grid gap-3 lg:grid-cols-[1fr_140px_2fr_auto] lg:items-end">
+      <label className="grid gap-1 text-sm font-semibold">IP address or CIDR<input name="cidr" required placeholder="203.0.113.0/24" className="min-h-11 rounded-lg border px-3" /></label>
+      <label className="grid gap-1 text-sm font-semibold">Action<select name="action" className="min-h-11 rounded-lg border px-3"><option>DENY</option><option>ALLOW</option></select></label>
+      <label className="grid gap-1 text-sm font-semibold">Audit reason<input name="reason" required minLength={10} maxLength={500} className="min-h-11 rounded-lg border px-3" /></label>
+      <button disabled={busy} className="min-h-11 rounded-lg bg-[var(--navy)] px-4 font-semibold text-white disabled:opacity-60">Add rule</button>
+    </form>
+    {rules.length ? <ul className="mt-5 grid gap-2">{rules.map((rule) => <li key={rule._id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><div><p className="font-mono text-sm font-bold">{rule.cidr}</p><p className="text-xs text-[var(--muted)]">{rule.action} · {rule.reason}</p></div><button disabled={busy} onClick={() => void remove(rule)} className="text-sm font-semibold text-red-700 disabled:opacity-60">Remove rule</button></li>)}</ul> : <EmptyState title="No network rules" description="Access is not currently restricted by an administrator network rule." />}
+  </Panel>;
 }

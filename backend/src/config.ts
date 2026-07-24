@@ -31,6 +31,10 @@ const schema = z.object({
   if (value.NODE_ENV === "production" && value.EMAIL_DELIVERY_MODE !== "smtp") {
     ctx.addIssue({ code: "custom", path: ["EMAIL_DELIVERY_MODE"], message: "Production requires SMTP email delivery" });
   }
+  if (value.NODE_ENV === "production") {
+    if (!value.FRONTEND_URL.startsWith("https://")) ctx.addIssue({ code: "custom", path: ["FRONTEND_URL"], message: "Production requires HTTPS termination" });
+    if (!value.PUBLIC_APP_URL.startsWith("https://")) ctx.addIssue({ code: "custom", path: ["PUBLIC_APP_URL"], message: "Production requires HTTPS termination" });
+  }
   if (value.EMAIL_DELIVERY_MODE === "smtp") {
     for (const field of ["SMTP_HOST", "SMTP_PORT", "SMTP_SECURE", "SMTP_USER", "SMTP_PASSWORD", "EMAIL_FROM_ADDRESS"] as const) {
       if (value[field] === undefined) ctx.addIssue({ code: "custom", path: [field], message: `${field} is required for SMTP delivery` });

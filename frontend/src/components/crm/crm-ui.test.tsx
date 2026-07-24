@@ -98,15 +98,19 @@ describe("EduFlow CRM interface", () => {
     expect(button).toBeEnabled();
   });
   it("presents MFA enablement as a positive event instead of a medium warning", async () => {
+    const polling = vi.spyOn(window, "setInterval");
     vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) => {
       const url = String(input);
       if (url.includes("/auth/me")) return response({ user: { role: "ADMIN", status: "ACTIVE", mfaEnabled: true }, passwordExpired: false, mfaComplete: true });
+      if (url.includes("/ip-rules")) return response({ rules: [] });
       return response({ alerts: [{ _id: "alert-1", type: "MFA_ENABLED", severity: "MEDIUM", createdAt: new Date().toISOString() }] });
     }));
     render(<AdminSecurityAlerts />);
     expect(await screen.findByText("Protection enabled")).toBeInTheDocument();
     expect(screen.getByText("Multi-factor authentication was enabled successfully.")).toBeInTheDocument();
     expect(screen.queryByText("MEDIUM")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("IP address or CIDR")).toBeInTheDocument();
+    expect(polling).toHaveBeenCalledWith(expect.any(Function), 30_000);
   });
   it("opens and closes the accessible mobile drawer", () => {
     render(<AppShell role="COUNSELLOR" title="Counsellor dashboard"><p>Content</p></AppShell>);
@@ -135,5 +139,50 @@ describe("EduFlow CRM interface", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Stage history" })).toBeInTheDocument());
     expect(screen.getByText("Student created enquiry")).toBeInTheDocument();
     expect(screen.queryByText(/internal note/i)).not.toBeInTheDocument();
+  });
+  it("submits with confirmation and shows loading, safe receipt and timestamp", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.stubGlobal("crypto", { randomUUID: () => "12345678-1234-1234-1234-123456789abc" });
+    let submitted = false;
+    const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) return response({ user: { role: "STUDENT", status: "ACTIVE", mfaEnabled: false }, passwordExpired: false, mfaComplete: true });
+      if (url.includes("/auth/csrf")) return response({ csrfToken: "test-csrf" });
+      if (url.includes("/applications/current/submit")) {
+        submitted = true;
+        expect(options?.headers).toMatchObject({ "idempotency-key": "12345678123412341234123456789abc12345678123412341234123456789abc" });
+        expect(options?.body).toBe(JSON.stringify({ confirm: true }));
+        return response({ receipt: { reference: "EDF-20260724-ABC123", submittedAt: "2026-07-24T10:00:00.000Z", integrity: "a".repeat(64), stage: "APPLICATION_SUBMITTED" } });
+      }
+      return response({
+        application: { _id: "a1", stage: submitted ? "APPLICATION_SUBMITTED" : "DOCUMENTS_PENDING" },
+        assignment: null,
+        history: [],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<StudentApplication />);
+    const button = await screen.findByRole("button", { name: "Submit application" });
+    button.focus();
+    fireEvent.click(button);
+    expect(await screen.findByRole("button", { name: "Submitting…" })).toBeDisabled();
+    expect(await screen.findByRole("status")).toHaveTextContent("Application submitted securely");
+    expect(screen.getByText(/EDF-20260724-ABC123/)).toBeInTheDocument();
+    expect(confirm).toHaveBeenCalledOnce();
+  });
+  it("keeps the application form usable and shows a safe submission error", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.stubGlobal("crypto", { randomUUID: () => "12345678-1234-1234-1234-123456789abc" });
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) return response({ user: { role: "STUDENT", status: "ACTIVE", mfaEnabled: false }, passwordExpired: false, mfaComplete: true });
+      if (url.includes("/auth/csrf")) return response({ csrfToken: "test-csrf" });
+      if (url.includes("/applications/current/submit")) return Promise.resolve({ ok: false, status: 422, json: () => Promise.resolve({ error: { code: "APPLICATION_NOT_READY", message: "Complete the required application information." } }) } as Response);
+      return response({ application: { _id: "a1", stage: "DOCUMENTS_PENDING" }, assignment: null, history: [] });
+    }));
+    render(<StudentApplication />);
+    fireEvent.click(await screen.findByRole("button", { name: "Submit application" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Complete the required application information.");
+    expect(screen.getByRole("button", { name: "Submit application" })).toBeEnabled();
   });
 });

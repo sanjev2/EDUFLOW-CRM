@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
 import { z } from "zod";
 import { requireAuthentication, requireCurrentPassword, requireMfa, requireRole, requireVerifiedEmail } from "../middleware/auth.js";
 import { StudentProfile, profileCompletion } from "../models/StudentProfile.js";
@@ -17,6 +17,7 @@ import { assignLeastLoaded, validateCounsellor } from "../crm/assignment.js";
 import { assertForwardTransition, canStudentCancel } from "../crm/application-state.js";
 import { pagination, requireAssignedStudent } from "../crm/access.js";
 import { profileSchema } from "../crm/profile-schema.js";
+import { submitOwnedApplication } from "../crm/application-submission.js";
 
 export const crmRouter = Router();
 crmRouter.use(requireAuthentication, requireVerifiedEmail, requireCurrentPassword);
@@ -43,6 +44,17 @@ const enquirySchema = z.object({
   preferredStudyLevel: z.string().trim().min(2).max(80).optional(),
   intendedIntake: z.string().trim().min(2).max(80).optional(),
 }).strict();
+const submissionWindows = new Map<string, { count: number; resetAt: number }>();
+const submissionRateLimit: RequestHandler = (req, _res, next) => {
+  const key = String(req.auth!.user._id);
+  const now = Date.now();
+  const current = submissionWindows.get(key);
+  const window = !current || current.resetAt <= now ? { count: 0, resetAt: now + 60 * 60_000 } : current;
+  window.count += 1;
+  submissionWindows.set(key, window);
+  if (window.count > 10) return next(new ApiError(429, "APPLICATION_SUBMISSION_RATE_LIMITED", "Too many submission attempts. Please try again later"));
+  next();
+};
 crmRouter.post("/applications", requireRole("STUDENT"), async (req, res) => {
   const input = strictBody(enquirySchema, req.body);
   let application;
@@ -67,6 +79,16 @@ async function applicationPayload(studentId: unknown) {
   return { application, history, assignment };
 }
 crmRouter.get("/applications/current", requireRole("STUDENT"), async (req, res) => res.json(await applicationPayload(req.auth!.user._id)));
+crmRouter.post("/applications/current/submit", requireRole("STUDENT"), submissionRateLimit, async (req, res) => {
+  strictBody(z.object({ confirm: z.literal(true) }).strict(), req.body);
+  const idempotencyKey = req.get("idempotency-key");
+  if (!idempotencyKey || !/^[A-Za-z0-9_-]{20,128}$/.test(idempotencyKey)) {
+    throw new ApiError(400, "INVALID_IDEMPOTENCY_KEY", "A valid request key is required");
+  }
+  const result = await submitOwnedApplication(req, idempotencyKey);
+  res.set("Cache-Control", "no-store, private");
+  res.status(result.duplicate ? 200 : 201).json(result);
+});
 crmRouter.get("/applications/student/:studentId", requireRole("COUNSELLOR", "ADMIN"), async (req, res) => {
   if (req.auth!.user.role === "COUNSELLOR") await requireAssignedStudent(req.auth!.user._id, req.params.studentId);
   res.json(await applicationPayload(req.params.studentId));

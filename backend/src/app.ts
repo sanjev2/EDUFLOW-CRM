@@ -17,9 +17,11 @@ import { accessRouter } from "./routes/access.js";
 import { crmRouter } from "./routes/crm.js";
 import { documentRouter } from "./routes/documents.js";
 import { privacyRouter } from "./routes/privacy.js";
+import { enforceIpAccess } from "./security/ip-access.js";
 
 export const app = express();
 app.disable("x-powered-by");
+if (config.NODE_ENV === "production") app.set("trust proxy", 1);
 app.use(helmet());
 app.use(cors({ origin: config.FRONTEND_URL, credentials: true }));
 app.use(express.json({ limit: "100kb" }));
@@ -30,6 +32,7 @@ app.use((req, res, next) => {
   res.setHeader("x-request-id", req.id);
   next();
 });
+app.use(enforceIpAccess);
 app.use(pinoHttp({ logger, customProps: (req) => ({ requestId: req.id }) }));
 app.use(loadAuthentication);
 app.use(enforceAdminMfaEnrollment);

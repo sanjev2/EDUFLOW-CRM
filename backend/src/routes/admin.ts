@@ -12,7 +12,8 @@ import { audit } from "../security/audit.js";
 import { ApiError } from "../errors.js";
 import { Session } from "../models/Session.js";
 import { AuditLog } from "../models/AuditLog.js";
-import { SecurityAlert } from "../models/Security.js";
+import { IpAccessRule, SecurityAlert } from "../models/Security.js";
+import { validIpCidr } from "../security/ip-access.js";
 
 export const adminRouter = Router();
 adminRouter.use(requireAuthentication, requireVerifiedEmail, requireCurrentPassword, requireMfa, requireFreshAuthentication, requireRole("ADMIN"));
@@ -96,4 +97,35 @@ adminRouter.get("/security-alerts", async (req, res) => {
     SecurityAlert.countDocuments(filter),
   ]);
   res.json({ alerts, page: input.page, limit: input.limit, total });
+});
+
+adminRouter.get("/ip-rules", async (_req, res) => {
+  const rules = await IpAccessRule.find().sort({ action: 1, cidr: 1 }).lean();
+  res.json({ rules });
+});
+
+adminRouter.post("/ip-rules", async (req, res) => {
+  const input = strictBody(z.object({
+    cidr: z.string().trim().min(2).max(64).refine(validIpCidr, "Enter a valid IPv4 CIDR or exact IPv6 address"),
+    action: z.enum(["ALLOW", "DENY"]),
+    reason: z.string().trim().min(10).max(500),
+    expiresAt: z.coerce.date().optional(),
+  }).strict(), req.body);
+  if (input.expiresAt && input.expiresAt <= new Date()) throw new ApiError(400, "INVALID_EXPIRY", "Expiry must be in the future");
+  try {
+    const rule = await IpAccessRule.create(input);
+    await audit(req, "IP_ACCESS_RULE_CREATED", { actorId: req.auth!.user._id, metadata: { action: input.action, cidr: input.cidr, reason: input.reason } });
+    res.status(201).json({ rule });
+  } catch (error: unknown) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === 11000) throw new ApiError(409, "IP_RULE_EXISTS", "That network rule already exists");
+    throw error;
+  }
+});
+
+adminRouter.delete("/ip-rules/:id", async (req, res) => {
+  const { reason } = strictBody(z.object({ reason: z.string().trim().min(10).max(500) }).strict(), req.body);
+  const rule = await IpAccessRule.findByIdAndDelete(req.params.id);
+  if (!rule) throw new ApiError(404, "IP_RULE_NOT_FOUND", "Network rule was not found");
+  await audit(req, "IP_ACCESS_RULE_REMOVED", { actorId: req.auth!.user._id, metadata: { action: rule.action, cidr: rule.cidr, reason } });
+  res.status(204).end();
 });
