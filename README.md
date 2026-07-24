@@ -37,6 +37,10 @@ Gmail SMTP is compatible through `smtp.gmail.com` using TLS and a Google App Pas
 
 See `docs/` for scope, security decisions, threat modelling and coursework traceability.
 
+Privacy export/import controls are available at `/privacy`. Container and Compose usage is documented in [`docs/CONTAINERS.md`](docs/CONTAINERS.md); CI security policy is in [`docs/CI_SECURITY_POLICY.md`](docs/CI_SECURITY_POLICY.md); and the authorised local assessment plan is in [`docs/PENETRATION_TEST_BASELINE.md`](docs/PENETRATION_TEST_BASELINE.md).
+
+Coursework submissions must disclose AI-assisted development according to the institution's policy. The student remains responsible for understanding, reviewing, testing and accurately representing every contribution; do not claim unaided authorship.
+
 ## Initial administrator
 
 See [`docs/AUTHENTICATION_DESIGN.md`](docs/AUTHENTICATION_DESIGN.md) for the controlled environment-variable bootstrap procedure. Never store bootstrap credentials in a file or commit them.

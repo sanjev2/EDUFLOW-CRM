@@ -8,6 +8,7 @@ coverage/
 *.log
 logs/
 .runtime/
+.evidence/
 .vscode/
 .idea/
 .DS_Store

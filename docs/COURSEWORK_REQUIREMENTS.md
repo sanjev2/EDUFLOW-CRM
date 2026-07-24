@@ -11,7 +11,7 @@
 | Secure private documents | Non-public storage and authorised delivery | Planned | Storage design and implementation | Upload/access tests |
 | Input validation | Strict Zod authentication/admin schemas | Authentication scope complete | Route schemas and safe errors | Unexpected-field and policy tests |
 | Testing | Vitest, Supertest and Testing Library | Authentication integration coverage present | Test command output | Automated suite |
-| Security evaluation | Formal penetration test after features | Deferred | Final report | Documented test cases |
+| Security evaluation | Manual-first, locally authorised penetration-test plan with redacted evidence handling | Baseline prepared; execution remains manual | `PENETRATION_TEST_BASELINE.md`, finding template and ignored evidence workspace | Documented test cases and retests |
 | Student CRM profile | Strict profile model and self/assignment ownership | Complete for CRM stage | Profile page and API | CRM ownership tests |
 | Application workflow | Server state machine and immutable stage history | Complete for CRM stage | Application timeline/API | Transition and cancellation tests |
 | Counsellor operations | Assignments, notes and follow-up tasks | Complete for CRM stage | Counsellor pages/API | IDOR and automation tests |
@@ -20,4 +20,4 @@
 | Secure email delivery | Verification, resend and password recovery through development outbox or standard SMTP | Implemented | Email service, authentication endpoints, `/resend-verification` | Message, enumeration, rate-limit, configuration and failure-sanitization tests |
 | Privacy-aligned data portability | Owned, versioned JSON export and strict student-profile import | Implemented | `/privacy`, privacy API and `PRIVACY_DESIGN.md` | Ownership, exclusion, CSRF, mass-assignment, pollution and size tests |
 
-Document security testing covers policy validation and access controls in the automated suite. Wider penetration and deployment security testing remains a separate final coursework stage.
+Automated security tests cover policy validation and access controls. The wider manual penetration test must still be executed and evidenced against the recorded baseline; the plan is not itself proof of testing.

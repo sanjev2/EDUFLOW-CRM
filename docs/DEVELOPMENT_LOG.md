@@ -43,3 +43,10 @@
 - Added preview-and-confirm student profile import using the existing strict profile rules, CSRF, 100 KB limits, recursive dangerous-key rejection, rate limits and sanitized audit events.
 - Added a role-aware privacy page with ephemeral downloads and no browser-storage persistence.
 - Added backend ownership/mass-assignment tests and frontend accessibility/state tests.
+
+## Deployment and assessment-readiness stage
+
+- Added non-root multi-stage backend and frontend containers plus a local Compose environment with authenticated MongoDB, health dependencies, persistent private data and constrained service privileges.
+- Added pinned GitHub Actions quality and security workflows for type-checking, linting, tests, builds, repository hygiene, production dependency audit and container builds.
+- Added a manual-first penetration-test baseline, finding template, redacted evidence workflow and two genuine historical regression scenarios.
+- Docker runtime validation and the manual penetration-test execution remain explicit environment/manual activities rather than claimed completed evidence.
