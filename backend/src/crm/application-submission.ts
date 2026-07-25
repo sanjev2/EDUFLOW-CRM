@@ -13,7 +13,7 @@ export type SubmissionReceipt = {
   reference: string;
   submittedAt: string;
   integrity: string;
-  stage: "APPLICATION_SUBMITTED";
+  stage: "APPLICATION_PREPARATION";
 };
 type StoredApplication = IApplication & { _id: unknown };
 
@@ -23,7 +23,7 @@ function safeReceipt(application: StoredApplication): SubmissionReceipt {
     reference: submission.reference,
     submittedAt: submission.submittedAt.toISOString(),
     integrity: submission.integrity,
-    stage: "APPLICATION_SUBMITTED",
+    stage: "APPLICATION_PREPARATION",
   };
 }
 
@@ -48,7 +48,7 @@ async function reconcileSideEffects(req: Request, application: StoredApplication
   await ApplicationStageHistory.updateOne(
     { transactionReference: reference },
     { $setOnInsert: {
-      applicationId: application._id, previousStage: "DOCUMENTS_PENDING", newStage: "APPLICATION_SUBMITTED",
+      applicationId: application._id, previousStage: "DOCUMENTS_PENDING", newStage: "APPLICATION_PREPARATION",
       actorId: application.studentId, actorRole: "STUDENT", reason: "Student submitted application for consultancy processing",
     } },
     { upsert: true },
@@ -71,17 +71,20 @@ async function reconcileSideEffects(req: Request, application: StoredApplication
       event: "APPLICATION_SUBMISSION_TRANSACTION",
       actorId: application.studentId, subjectId: application.studentId,
       ipHash: keyedHash(req.ip ?? ""), requestId: req.id,
-      metadata: { applicationId: String(application._id), stage: "APPLICATION_SUBMITTED" },
+      metadata: { applicationId: String(application._id), stage: "APPLICATION_PREPARATION" },
       createdAt: submission.submittedAt,
     } },
     { upsert: true },
   );
 }
 
-export async function submitOwnedApplication(req: Request, idempotencyKey: string) {
+export async function submitOwnedApplication(req: Request, idempotencyKey: string, applicationId?: string) {
   const studentId = req.auth!.user._id;
   const keyHash = sha256(idempotencyKey);
-  let application = await Application.findOne({ studentId, active: true }).select("+submission.idempotencyKeyHash");
+  let application = await Application.findOne({
+    ...(applicationId ? { _id: applicationId } : {}),
+    studentId, active: true, archivedAt: { $exists: false },
+  }).sort({ createdAt: -1 }).select("+submission.idempotencyKeyHash");
   if (!application) throw new ApiError(404, "APPLICATION_NOT_FOUND", "Application was not found");
   if (application.submission) {
     if (application.submission.idempotencyKeyHash !== keyHash) throw new ApiError(409, "APPLICATION_ALREADY_SUBMITTED", "This application has already been submitted");
@@ -92,18 +95,19 @@ export async function submitOwnedApplication(req: Request, idempotencyKey: strin
   await validateReadiness(application);
 
   const submittedAt = new Date();
+  const selectedApplicationId = application._id;
   const reference = `EDF-${submittedAt.toISOString().slice(0, 10).replaceAll("-", "")}-${randomToken(9).toUpperCase()}`;
   const integrity = keyedHash(`application-submission:${String(application._id)}:${String(studentId)}:${reference}:${submittedAt.toISOString()}`);
   application = await Application.findOneAndUpdate(
-    { _id: application._id, studentId, stage: "DOCUMENTS_PENDING", submission: { $exists: false } },
-    { $set: { stage: "APPLICATION_SUBMITTED", submission: {
+    { _id: selectedApplicationId, studentId, stage: "DOCUMENTS_PENDING", archivedAt: { $exists: false }, submission: { $exists: false } },
+    { $set: { stage: "APPLICATION_PREPARATION", submission: {
       idempotencyKeyHash: keyHash, reference, integrity, submittedAt,
-      previousStage: "DOCUMENTS_PENDING", newStage: "APPLICATION_SUBMITTED",
+      previousStage: "DOCUMENTS_PENDING", newStage: "APPLICATION_PREPARATION",
     } } },
     { new: true, runValidators: true },
   );
   if (!application) {
-    const concurrent = await Application.findOne({ studentId, active: true }).select("+submission.idempotencyKeyHash");
+    const concurrent = await Application.findOne({ _id: selectedApplicationId, studentId, active: true }).select("+submission.idempotencyKeyHash");
     if (concurrent?.submission?.idempotencyKeyHash === keyHash) {
       await reconcileSideEffects(req, concurrent);
       return { receipt: safeReceipt(concurrent), duplicate: true };

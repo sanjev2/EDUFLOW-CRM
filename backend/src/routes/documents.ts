@@ -56,8 +56,10 @@ async function authorizeDocument(req: Parameters<RequestHandler>[0]) {
   const role = req.auth!.user.role;
   let allowed = role === "ADMIN" || (role === "STUDENT" && String(document.ownerId) === String(req.auth!.user._id));
   if (role === "COUNSELLOR") {
-    allowed = Boolean(await import("../models/CounsellorAssignment.js").then(({ CounsellorAssignment }) =>
-      CounsellorAssignment.exists({ counsellorId: req.auth!.user._id, studentId: document.ownerId, active: true })));
+    allowed = document.applicationId
+      ? Boolean(await Application.exists({ _id: document.applicationId, assignedCounsellorId: req.auth!.user._id }))
+      : Boolean(await import("../models/CounsellorAssignment.js").then(({ CounsellorAssignment }) =>
+        CounsellorAssignment.exists({ counsellorId: req.auth!.user._id, studentId: document.ownerId, active: true })));
   }
   if (!allowed) {
     await audit(req, "DOCUMENT_ACCESS_DENIED", { actorId: req.auth!.user._id });
@@ -81,7 +83,7 @@ documentRouter.post("/", requireRole("STUDENT"), trustedOrigin, uploadRateLimit,
       const originalFilename = req.get("x-file-name") ?? "";
       const applicationId = req.get("x-application-id");
       if (applicationId && !validId(applicationId)) throw new ApiError(400, "DOCUMENT_VALIDATION_REJECTED", "The related application is invalid");
-      if (applicationId && !(await Application.exists({ _id: applicationId, studentId: req.auth!.user._id }))) {
+      if (applicationId && !(await Application.exists({ _id: applicationId, studentId: req.auth!.user._id, active: true, archivedAt: { $exists: false } }))) {
         throw new ApiError(404, "APPLICATION_NOT_FOUND", "Application was not found");
       }
       const buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);

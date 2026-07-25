@@ -19,6 +19,7 @@ export interface IUser {
   mfaSecretEncrypted?: string;
   recoveryCodeHashes: string[];
   lastAuthenticatedAt?: Date;
+  invitationAcceptedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -39,6 +40,7 @@ const userSchema = new Schema<IUser>({
   mfaSecretEncrypted: { type: String, select: false },
   recoveryCodeHashes: { type: [String], default: [], select: false },
   lastAuthenticatedAt: Date,
+  invitationAcceptedAt: Date,
 }, { timestamps: true, strict: "throw", versionKey: false });
 
 userSchema.set("toJSON", {

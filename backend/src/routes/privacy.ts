@@ -95,7 +95,12 @@ privacyRouter.get("/export", exportRateLimit, async (req, res) => {
     applications: applications.map((application) => ({
       id: String(application._id), stage: application.stage, active: application.active,
       preferredCountry: application.preferredCountry, preferredStudyLevel: application.preferredStudyLevel,
-      intendedIntake: application.intendedIntake, createdAt: application.createdAt, updatedAt: application.updatedAt,
+      institution: application.institution, program: application.program, intendedIntake: application.intendedIntake,
+      assignmentState: application.assignmentState,
+      checklist: application.checklist.map((item) => ({ key: item.key, category: item.category, label: item.label, status: item.status, feedback: item.feedback })),
+      discontinuedAt: application.discontinuedAt, discontinuationReason: application.discontinuationReason,
+      archivedAt: application.archivedAt, archiveReason: application.archiveReason,
+      createdAt: application.createdAt, updatedAt: application.updatedAt,
     })),
     applicationHistory: history.map((event) => ({
       id: String(event._id), applicationId: String(event.applicationId), previousStage: event.previousStage,

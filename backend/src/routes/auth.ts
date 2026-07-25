@@ -10,6 +10,7 @@ import { decrypt, keyedHash, randomToken, sha256 } from "../security/crypto.js";
 import { audit } from "../security/audit.js";
 import { deliveryReceiptMetadata, providerAccepted, sendEmailVerification, sendPasswordReset, type DeliveryReceipt } from "../email/delivery.js";
 import { ApiError } from "../errors.js";
+import { reconcileUnassigned } from "../crm/assignment.js";
 import { clearSessionCookie, createSession, rotateSession } from "../security/session.js";
 import { requireAuthentication, requireFreshAuthentication } from "../middleware/auth.js";
 import { Session } from "../models/Session.js";
@@ -160,6 +161,7 @@ authRouter.post("/login", async (req, res) => {
   if (user.status !== "ACTIVE") throw new ApiError(403, "ACCOUNT_UNAVAILABLE", "This account is unavailable");
   user.failedLoginCount = 0;
   user.lockedUntil = undefined;
+  if (user.role === "COUNSELLOR" && user.emailVerifiedAt) user.invitationAcceptedAt = new Date();
   user.lastAuthenticatedAt = new Date();
   await user.save();
   await LoginAttempt.create({ emailHash, ipHash, outcome: "SUCCESS" });
@@ -269,6 +271,9 @@ authRouter.post("/reset-password", async (req, res) => {
   }
   await SecurityAlert.create({ userId: user._id, type: "PASSWORD_RESET", severity: "MEDIUM", metadata: {} });
   await audit(req, "PASSWORD_RESET", { subjectId: user._id });
+  if (user.role === "COUNSELLOR" && user.emailVerifiedAt && user.status === "ACTIVE") {
+    await reconcileUnassigned(100, user._id);
+  }
   res.json({ message: "Password reset successfully. Sign in again." });
 });
 

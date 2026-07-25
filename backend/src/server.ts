@@ -2,9 +2,11 @@ import { app } from "./app.js";
 import { config, configurationSource } from "./config.js";
 import { connectDatabase, disconnectDatabase } from "./database.js";
 import { logger } from "./logger.js";
+import { migrateApplicationSchema } from "./crm/migration.js";
 
 async function start() {
   await connectDatabase();
+  await migrateApplicationSchema();
   logger.info({
     configurationSource,
     emailDeliveryMode: config.EMAIL_DELIVERY_MODE,
