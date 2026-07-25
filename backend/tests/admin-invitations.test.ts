@@ -194,17 +194,96 @@ describe("administrator counsellor invitations", () => {
   });
 
   it("supports verify, secure password setup and counsellor login", async () => {
+    const invitationPassword = "Ab3!xyZ789pq";
     const admin = await identity("ADMIN");
     await create(admin).expect(201);
     const invitation = new URL(delivered[0]!.link);
     const verificationToken = invitation.searchParams.get("verification")!;
     const setupToken = invitation.searchParams.get("setup")!;
-    await request(app).post("/api/v1/auth/verify-email").send({ token: verificationToken }).expect(200);
-    const reset = await request(app).post("/api/v1/auth/reset-password").send({ token: setupToken, password, passwordConfirmation: password }).expect(200);
+    await request(app).post("/api/v1/auth/accept-invitation/verify")
+      .send({ verificationToken, setupToken })
+      .expect(200);
+    const reset = await request(app).post("/api/v1/auth/reset-password")
+      .send({ token: setupToken, password: invitationPassword, passwordConfirmation: invitationPassword })
+      .expect(200);
     expect(JSON.stringify(reset.body)).not.toContain(setupToken);
-    expect(JSON.stringify(reset.body)).not.toContain(password);
+    expect(JSON.stringify(reset.body)).not.toContain(invitationPassword);
     expect(JSON.stringify(reset.body)).not.toContain("http");
-    const login = await request(app).post("/api/v1/auth/login").set("Origin", "http://localhost:3100").send({ email: payload.email, password }).expect(200);
+    const activated = await User.findOne({ email: payload.email });
+    expect(activated!.emailVerifiedAt).toBeInstanceOf(Date);
+    expect(activated!.invitationAcceptedAt).toBeInstanceOf(Date);
+    expect(await EmailVerificationToken.countDocuments({ userId: activated!._id, usedAt: { $exists: false } })).toBe(0);
+    expect(await PasswordResetToken.countDocuments({ userId: activated!._id, usedAt: { $exists: false } })).toBe(0);
+    const reusedSetup = await request(app).post("/api/v1/auth/reset-password")
+      .send({ token: setupToken, password, passwordConfirmation: password })
+      .expect(400);
+    expect(reusedSetup.body.error.code).toBe("INVALID_TOKEN");
+    const login = await request(app).post("/api/v1/auth/login").set("Origin", "http://localhost:3100")
+      .send({ email: payload.email, password: invitationPassword })
+      .expect(200);
     expect(login.body.user.role).toBe("COUNSELLOR");
+  });
+
+  it("does not activate a counsellor when the setup capability expires after verification", async () => {
+    const admin = await identity("ADMIN");
+    await create(admin).expect(201);
+    const invitation = new URL(delivered[0]!.link);
+    const verificationToken = invitation.searchParams.get("verification")!;
+    const setupToken = invitation.searchParams.get("setup")!;
+    await request(app).post("/api/v1/auth/accept-invitation/verify")
+      .send({ verificationToken, setupToken })
+      .expect(200);
+    await PasswordResetToken.updateOne({}, { expiresAt: new Date(Date.now() - 1000) });
+    const expired = await request(app).post("/api/v1/auth/reset-password")
+      .send({ token: setupToken, password, passwordConfirmation: password })
+      .expect(400);
+    expect(expired.body.error.code).toBe("INVALID_TOKEN");
+    expect((await User.findOne({ email: payload.email }))!.invitationAcceptedAt).toBeUndefined();
+  });
+
+  it("requires paired single-use invitation tokens and rejects strict-schema violations", async () => {
+    const admin = await identity("ADMIN");
+    await create(admin).expect(201);
+    const first = new URL(delivered[0]!.link);
+    const firstVerification = first.searchParams.get("verification")!;
+    const firstSetup = first.searchParams.get("setup")!;
+    await create(admin, { fullName: "Second Counsellor", email: "second@example.test" }).expect(201);
+    const second = new URL(delivered[1]!.link);
+    const secondSetup = second.searchParams.get("setup")!;
+
+    const mismatched = await request(app).post("/api/v1/auth/accept-invitation/verify")
+      .send({ verificationToken: firstVerification, setupToken: secondSetup })
+      .expect(400);
+    expect(mismatched.body.error.code).toBe("INVALID_INVITATION");
+    expect(JSON.stringify(mismatched.body)).not.toContain(firstVerification);
+    expect(JSON.stringify(mismatched.body)).not.toContain(secondSetup);
+
+    await request(app).post("/api/v1/auth/accept-invitation/verify")
+      .send({ verificationToken: firstVerification, setupToken: firstSetup, role: "ADMIN" })
+      .expect(400);
+    await request(app).post("/api/v1/auth/accept-invitation/verify")
+      .send({ verificationToken: firstVerification, setupToken: firstSetup })
+      .expect(200);
+    const reused = await request(app).post("/api/v1/auth/accept-invitation/verify")
+      .send({ verificationToken: firstVerification, setupToken: firstSetup })
+      .expect(400);
+    expect(reused.body.error.code).toBe("INVALID_INVITATION");
+  });
+
+  it("rejects expired verification and setup tokens independently", async () => {
+    const admin = await identity("ADMIN");
+    await create(admin).expect(201);
+    const invitation = new URL(delivered[0]!.link);
+    const verificationToken = invitation.searchParams.get("verification")!;
+    const setupToken = invitation.searchParams.get("setup")!;
+    await EmailVerificationToken.updateOne({}, { expiresAt: new Date(Date.now() - 1000) });
+    await request(app).post("/api/v1/auth/accept-invitation/verify")
+      .send({ verificationToken, setupToken })
+      .expect(400);
+    await EmailVerificationToken.updateOne({}, { expiresAt: new Date(Date.now() + 60_000) });
+    await PasswordResetToken.updateOne({}, { expiresAt: new Date(Date.now() - 1000) });
+    await request(app).post("/api/v1/auth/accept-invitation/verify")
+      .send({ verificationToken, setupToken })
+      .expect(400);
   });
 });

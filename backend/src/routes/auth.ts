@@ -104,6 +104,47 @@ authRouter.post("/verify-email", async (req, res) => {
   res.json({ message: "Email verified successfully." });
 });
 
+authRouter.post("/accept-invitation/verify", async (req, res) => {
+  const input = strictBody(z.object({
+    verificationToken: z.string().min(20).max(500),
+    setupToken: z.string().min(20).max(500),
+  }).strict(), req.body);
+  const now = new Date();
+  const [verification, setup] = await Promise.all([
+    EmailVerificationToken.findOne({
+      tokenHash: sha256(input.verificationToken),
+      usedAt: { $exists: false },
+      expiresAt: { $gt: now },
+    }).select("+tokenHash"),
+    PasswordResetToken.findOne({
+      tokenHash: sha256(input.setupToken),
+      usedAt: { $exists: false },
+      expiresAt: { $gt: now },
+    }).select("+tokenHash"),
+  ]);
+  if (!verification || !setup || !verification.userId.equals(setup.userId)) {
+    throw new ApiError(400, "INVALID_INVITATION", "The invitation link is invalid or expired");
+  }
+  const user = await User.findOne({
+    _id: verification.userId,
+    role: "COUNSELLOR",
+    status: "ACTIVE",
+    invitationAcceptedAt: { $exists: false },
+  });
+  if (!user) throw new ApiError(400, "INVALID_INVITATION", "The invitation link is invalid or expired");
+  const used = await EmailVerificationToken.updateOne(
+    { _id: verification._id, usedAt: { $exists: false } },
+    { usedAt: now },
+  );
+  if (!used.modifiedCount) throw new ApiError(400, "INVALID_INVITATION", "The invitation link is invalid or expired");
+  if (!user.emailVerifiedAt) {
+    user.emailVerifiedAt = now;
+    await user.save();
+  }
+  await audit(req, "EMAIL_VERIFICATION", { subjectId: user._id, metadata: { invitation: true } });
+  res.json({ message: "Invitation verified successfully." });
+});
+
 authRouter.post("/captcha", async (req, res) => {
   const a = Math.floor(Math.random() * 8) + 1;
   const b = Math.floor(Math.random() * 8) + 1;
@@ -264,6 +305,20 @@ authRouter.post("/reset-password", async (req, res) => {
   await user.save();
   await recordPassword(user._id, oldHash);
   await recordPassword(user._id, passwordHash);
+  if (user.role === "COUNSELLOR" && user.emailVerifiedAt) {
+    user.invitationAcceptedAt = new Date();
+    await user.save();
+    await Promise.all([
+      EmailVerificationToken.updateMany(
+        { userId: user._id, usedAt: { $exists: false } },
+        { usedAt: new Date() },
+      ),
+      PasswordResetToken.updateMany(
+        { userId: user._id, _id: { $ne: record._id }, usedAt: { $exists: false } },
+        { usedAt: new Date() },
+      ),
+    ]);
+  }
   await Session.updateMany({ userId: user._id, revokedAt: { $exists: false } }, { revokedAt: new Date() });
   if (mfaReenrolmentRequired) {
     await MfaChallenge.updateMany({ userId: user._id, usedAt: { $exists: false } }, { usedAt: new Date() });

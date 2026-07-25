@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { StrictMode } from "react";
 import { ResendVerificationForm } from "./resend-verification-form";
 import { LoginForm } from "./login-form";
 import { ForgotPasswordForm, ResetPasswordForm } from "./forgot-reset-forms";
@@ -214,7 +215,7 @@ describe("verification and recovery email interfaces", () => {
     navigation.params.set("setup", "single-use-password-setup-token");
     const fetchMock = vi.fn((input: string | URL | Request) => {
       const url = String(input);
-      if (url.includes("/verify-email")) return response({ message: "Email verified successfully." });
+      if (url.includes("/accept-invitation/verify")) return response({ message: "Invitation verified successfully." });
       if (url.includes("/reset-password")) return response({ message: "Password reset successfully." });
       return response({});
     });
@@ -224,11 +225,123 @@ describe("verification and recovery email interfaces", () => {
     fireEvent.change(screen.getByLabelText("New password"), { target: { value: "Counsellor-Setup9!" } });
     fireEvent.change(screen.getByLabelText("Confirm new password"), { target: { value: "Counsellor-Setup9!" } });
     fireEvent.click(screen.getByRole("button", { name: "Set password and continue" }));
-    expect(await screen.findByRole("link", { name: "Continue to sign in" })).toHaveAttribute("href", "/login");
-    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/login"), { timeout: 3000 });
+    expect(await screen.findByRole("link", { name: "Continue to sign in" })).toHaveAttribute("href", "/login?success=invitation-accepted");
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/login?success=invitation-accepted"), { timeout: 3000 });
     expect(window.location.search).toBe("");
     expect(window.localStorage.length).toBe(0);
     expect(window.sessionStorage.length).toBe(0);
+  });
+
+  it("verifies exactly once under React Strict Mode and retains setup capability only in memory", async () => {
+    navigation.params.set("verification", "single-use-verification-token");
+    navigation.params.set("setup", "single-use-password-setup-token");
+    const fetchMock = vi.fn((...args: [string | URL | Request, RequestInit?]) => {
+      const [input] = args;
+      if (String(input).includes("/accept-invitation/verify")) {
+        return response({ message: "Invitation verified successfully." });
+      }
+      return response({ message: "Password reset successfully." });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const history = vi.spyOn(window.history, "replaceState");
+    render(<StrictMode><AcceptCounsellorInvitation /></StrictMode>);
+    expect(await screen.findByText(/Email verified\. Set your password/)).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/accept-invitation/verify"))).toHaveLength(1);
+    expect(history).toHaveBeenCalledWith({}, "", "/accept-invitation");
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+
+    fireEvent.change(screen.getByLabelText("New password"), { target: { value: "Private-Setup8!" } });
+    fireEvent.change(screen.getByLabelText("Confirm new password"), { target: { value: "Private-Setup8!" } });
+    fireEvent.click(screen.getByRole("button", { name: "Set password and continue" }));
+    await screen.findByRole("link", { name: "Continue to sign in" });
+    const setupRequest = fetchMock.mock.calls.find(([input]) => String(input).includes("/reset-password"));
+    expect(JSON.parse(String((setupRequest?.[1] as RequestInit).body))).toMatchObject({
+      token: "single-use-password-setup-token",
+      password: "Private-Setup8!",
+      passwordConfirmation: "Private-Setup8!",
+    });
+  });
+
+  it("prevents mismatched and duplicate password submissions", async () => {
+    navigation.params.set("verification", "single-use-verification-token");
+    navigation.params.set("setup", "single-use-password-setup-token");
+    let finish!: (value: Response) => void;
+    const fetchMock = vi.fn((...args: [string | URL | Request, RequestInit?]) => {
+      const [input] = args;
+      if (String(input).includes("/accept-invitation/verify")) return response({});
+      return new Promise<Response>((resolve) => { finish = resolve; });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AcceptCounsellorInvitation />);
+    await screen.findByText(/Email verified/);
+    fireEvent.change(screen.getByLabelText("New password"), { target: { value: "Private-Setup8!" } });
+    fireEvent.change(screen.getByLabelText("Confirm new password"), { target: { value: "Different-Setup8!" } });
+    fireEvent.click(screen.getByRole("button", { name: "Set password and continue" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("do not match");
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/reset-password"))).toHaveLength(0);
+
+    fireEvent.change(screen.getByLabelText("Confirm new password"), { target: { value: "Private-Setup8!" } });
+    fireEvent.click(screen.getByRole("button", { name: "Set password and continue" }));
+    fireEvent.click(screen.getByRole("button", { name: /Please wait/ }));
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/reset-password"))).toHaveLength(1);
+    finish(await response({}));
+  });
+
+  it.each([
+    ["INVALID_INVITATION", "invalid, expired, or has already been used"],
+    ["INVALID_TOKEN", "invalid, expired, or has already been used"],
+  ])("shows only safe recovery for %s verification failures", async (code, expected) => {
+    navigation.params.set("verification", "failed-verification-token");
+    navigation.params.set("setup", "password-setup-token");
+    vi.stubGlobal("fetch", vi.fn(() => response({ error: { code, message: "internal detail" } }, false, 400)));
+    render(<AcceptCounsellorInvitation />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(expected);
+    expect(screen.queryByLabelText("New password")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Email verified/)).not.toBeInTheDocument();
+  });
+
+  it("maps setup validation safely without simultaneous success and error alerts", async () => {
+    navigation.params.set("verification", "single-use-verification-token");
+    navigation.params.set("setup", "single-use-password-setup-token");
+    const fetchMock = vi.fn((input: string | URL | Request) =>
+      String(input).includes("/accept-invitation/verify")
+        ? response({})
+        : response({ error: { code: "VALIDATION_ERROR", message: "Request validation failed", details: { secret: "hidden" } } }, false, 400));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AcceptCounsellorInvitation />);
+    await screen.findByText(/Email verified/);
+    fireEvent.change(screen.getByLabelText("New password"), { target: { value: "Private-Setup8!" } });
+    fireEvent.change(screen.getByLabelText("Confirm new password"), { target: { value: "Private-Setup8!" } });
+    fireEvent.click(screen.getByRole("button", { name: "Set password and continue" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Avoid common passwords");
+    expect(screen.getByRole("alert")).not.toHaveTextContent(/Request validation|hidden/);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Set password and continue" })).toBeEnabled();
+  });
+
+  it("rejects a visibly policy-compliant but common password before submission", async () => {
+    navigation.params.set("verification", "single-use-verification-token");
+    navigation.params.set("setup", "single-use-password-setup-token");
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      void input;
+      return response({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AcceptCounsellorInvitation />);
+    await screen.findByText(/Email verified/);
+    fireEvent.change(screen.getByLabelText("New password"), { target: { value: "Password-Test8!" } });
+    fireEvent.change(screen.getByLabelText("Confirm new password"), { target: { value: "Password-Test8!" } });
+    fireEvent.click(screen.getByRole("button", { name: "Set password and continue" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("less common password");
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("/reset-password"))).toHaveLength(0);
+  });
+
+  it("treats refresh after token cleanup as an invalid incomplete flow", () => {
+    window.history.replaceState({}, "", "/accept-invitation");
+    render(<AcceptCounsellorInvitation />);
+    expect(screen.getByRole("alert")).toHaveTextContent("incomplete");
+    expect(screen.queryByLabelText("New password")).not.toBeInTheDocument();
   });
 
   it("keeps invitation recovery navigation visible for an invalid link", () => {

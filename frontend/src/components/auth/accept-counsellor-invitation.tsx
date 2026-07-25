@@ -14,12 +14,18 @@ import {
 export function AcceptCounsellorInvitation() {
   const params = useSearchParams();
   const router = useRouter();
-  const verificationToken = params.get("verification") ?? "";
-  const setupToken = params.get("setup") ?? "";
+  const [tokens] = useState(() => ({
+    verification: params.get("verification") ?? "",
+    setup: params.get("setup") ?? "",
+  }));
+  const verificationToken = tokens.verification;
+  const setupToken = tokens.setup;
   const verification = useRef<Promise<unknown> | undefined>(undefined);
+  const submitting = useRef(false);
   const [ready, setReady] = useState(false);
   const [complete, setComplete] = useState(false);
   const [password, setPassword] = useState("");
+  const [passwordConfirmation, setPasswordConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(
     !verificationToken || !setupToken
@@ -29,9 +35,12 @@ export function AcceptCounsellorInvitation() {
 
   useEffect(() => {
     if (!verificationToken || !setupToken) return;
-    verification.current ??= api("/api/v1/auth/verify-email", {
+    verification.current ??= api("/api/v1/auth/accept-invitation/verify", {
       method: "POST",
-      body: JSON.stringify({ token: verificationToken }),
+      body: JSON.stringify({
+        verificationToken,
+        setupToken,
+      }),
     });
     let active = true;
     void verification.current
@@ -41,7 +50,10 @@ export function AcceptCounsellorInvitation() {
         setReady(true);
       })
       .catch((reason: Error) => {
-        if (active) setError(reason.message);
+        if (active) {
+          setReady(false);
+          setError(invitationError(reason, "verify"));
+        }
       });
     return () => {
       active = false;
@@ -50,34 +62,44 @@ export function AcceptCounsellorInvitation() {
 
   useEffect(() => {
     if (!complete) return;
-    const timer = setTimeout(() => router.replace("/login"), 2000);
+    const timer = setTimeout(
+      () => router.replace("/login?success=invitation-accepted"),
+      2000,
+    );
     return () => clearTimeout(timer);
   }, [complete, router]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitting.current || !ready) return;
+    if (password !== passwordConfirmation) {
+      setError("The passwords do not match.");
+      return;
+    }
+    const policyError = passwordPolicyError(password);
+    if (policyError) {
+      setError(policyError);
+      return;
+    }
+    submitting.current = true;
     setBusy(true);
     setError("");
-    const data = new FormData(event.currentTarget);
     try {
       await api("/api/v1/auth/reset-password", {
         method: "POST",
         body: JSON.stringify({
           token: setupToken,
           password,
-          passwordConfirmation: data.get("passwordConfirmation"),
+          passwordConfirmation,
         }),
       });
       window.history.replaceState({}, "", "/accept-invitation");
       setComplete(true);
       setReady(false);
     } catch (reason) {
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : "The invitation could not be completed.",
-      );
+      setError(invitationError(reason, "setup"));
       setBusy(false);
+      submitting.current = false;
     }
   }
 
@@ -95,7 +117,7 @@ export function AcceptCounsellorInvitation() {
       >
         Back to sign in
       </Link>
-      {error && (
+      {error && !ready && (
         <p className="mt-4 text-sm text-slate-600">
           If this invitation has expired or was already used, ask your
           administrator to resend it.
@@ -108,7 +130,7 @@ export function AcceptCounsellorInvitation() {
         >
           <p>Your password is set. You can now sign in as a counsellor.</p>
           <Link
-            href="/login"
+            href="/login?success=invitation-accepted"
             className="mt-4 inline-flex min-h-11 items-center rounded-lg bg-blue-700 px-5 font-semibold text-white hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4"
           >
             Continue to sign in
@@ -122,13 +144,15 @@ export function AcceptCounsellorInvitation() {
       )}
       {ready && (
         <form onSubmit={submit} className="mt-6 grid gap-5">
-          <p
-            role="status"
-            className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-900"
-          >
-            Email verified. Set your password to finish accepting the
-            invitation.
-          </p>
+          {!error && (
+            <p
+              role="status"
+              className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-900"
+            >
+              Email verified. Set your password to finish accepting the
+              invitation.
+            </p>
+          )}
           <PasswordField
             label="New password"
             name="password"
@@ -142,6 +166,8 @@ export function AcceptCounsellorInvitation() {
           <PasswordField
             label="Confirm new password"
             name="passwordConfirmation"
+            value={passwordConfirmation}
+            onChange={(event) => setPasswordConfirmation(event.target.value)}
             autoComplete="new-password"
             maxLength={128}
             required
@@ -151,4 +177,40 @@ export function AcceptCounsellorInvitation() {
       )}
     </AuthShell>
   );
+}
+
+type SafeApiError = Error & { code?: string; details?: unknown };
+const commonPasswordParts = ["password", "password123", "qwerty123", "letmein123", "admin123", "welcome123", "iloveyou"];
+
+function passwordPolicyError(password: string) {
+  if (
+    password.length < 12 ||
+    password.length > 128 ||
+    !/[A-Z]/.test(password) ||
+    !/[a-z]/.test(password) ||
+    !/\d/.test(password) ||
+    !/[^A-Za-z0-9]/.test(password)
+  ) {
+    return "Use 12–128 characters with uppercase and lowercase letters, a number, and a special character.";
+  }
+  if (commonPasswordParts.some((part) => password.toLowerCase().includes(part))) {
+    return "Choose a less common password that does not contain common password terms.";
+  }
+  return "";
+}
+
+function invitationError(reason: unknown, phase: "verify" | "setup") {
+  const error = reason as SafeApiError;
+  if (error?.code === "INVALID_INVITATION" || error?.code === "INVALID_TOKEN") {
+    return phase === "verify"
+      ? "This invitation is invalid, expired, or has already been used. Ask your administrator to resend it."
+      : "This password-setup link is invalid, expired, or has already been used. Ask your administrator to resend the invitation.";
+  }
+  if (error?.code === "PASSWORD_REUSED") {
+    return "Choose a password you have not used recently.";
+  }
+  if (error?.code === "VALIDATION_ERROR") {
+    return "Choose matching passwords with 12–128 characters, including uppercase and lowercase letters, a number, and a special character. Avoid common passwords.";
+  }
+  return "The invitation could not be completed right now. Please try again.";
 }

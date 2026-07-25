@@ -10,6 +10,7 @@ type LoginResult = { mfaRequired?: boolean; challenge?: string; csrfToken?: stri
 const successMessages = {
   "email-verified": "Email verified successfully. You can now sign in.",
   "password-reset": "Password reset successful. Sign in with your new password.",
+  "invitation-accepted": "Invitation accepted. Sign in with your new password.",
 } as const;
 export function LoginForm() {
   const router = useRouter();
