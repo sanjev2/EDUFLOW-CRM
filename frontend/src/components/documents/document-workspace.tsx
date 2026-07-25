@@ -15,6 +15,7 @@ const allowedTypes = new Set(["application/pdf", "image/jpeg", "image/png"]);
 export function DocumentWorkspace({ role, studentId }: { role: Role; studentId?: string }) {
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [applicationId, setApplicationId] = useState<string>();
+  const [applications, setApplications] = useState<{ _id: string; active?: boolean; archivedAt?: string; preferredCountry?: string; institution?: string; program?: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File>();
@@ -29,8 +30,9 @@ export function DocumentWorkspace({ role, studentId }: { role: Role; studentId?:
       const result = await api<{ documents: DocumentItem[] }>(`/api/v1/documents${suffix}`);
       setDocuments(result.documents);
       if (role === "STUDENT") {
-        const application = await api<{ application: { _id: string } | null }>("/api/v1/crm/applications/current");
-        setApplicationId(application.application?._id);
+        const applicationResult = await api<{ applications?: { _id: string; active?: boolean; archivedAt?: string; preferredCountry?: string; institution?: string; program?: string }[] }>("/api/v1/crm/applications/mine");
+        const available = (applicationResult.applications ?? []).filter((item) => item.active && !item.archivedAt);
+        setApplications(available); setApplicationId((current) => current && available.some((item) => item._id === current) ? current : available[0]?._id);
       }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Documents could not be loaded.");
@@ -43,8 +45,9 @@ export function DocumentWorkspace({ role, studentId }: { role: Role; studentId?:
       .then(async (result) => {
         setDocuments(result.documents);
         if (role === "STUDENT") {
-          const application = await api<{ application: { _id: string } | null }>("/api/v1/crm/applications/current");
-          setApplicationId(application.application?._id);
+          const applicationResult = await api<{ applications?: { _id: string; active?: boolean; archivedAt?: string; preferredCountry?: string; institution?: string; program?: string }[] }>("/api/v1/crm/applications/mine");
+          const available = (applicationResult.applications ?? []).filter((item) => item.active && !item.archivedAt);
+          setApplications(available); setApplicationId(available[0]?._id);
         }
       })
       .catch((loadError: Error) => setError(loadError.message))
@@ -121,6 +124,7 @@ export function DocumentWorkspace({ role, studentId }: { role: Role; studentId?:
   return <div className="grid gap-6">
     {role === "STUDENT" && <Panel title="Upload a document">
       <form onSubmit={upload} className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
+        {applications.length > 0 && <label className="grid gap-1.5 text-sm font-semibold">Related application<select value={applicationId ?? ""} onChange={(event) => setApplicationId(event.target.value)} className="min-h-11 rounded-lg border border-[var(--border)] bg-white px-3">{applications.map((application) => <option key={application._id} value={application._id}>{[application.preferredCountry, application.institution, application.program].filter(Boolean).join(" — ") || application._id}</option>)}</select></label>}
         <label className="grid gap-1.5 text-sm font-semibold">Document category<select name="category" required className="min-h-11 rounded-lg border border-[var(--border)] bg-white px-3">{categories.map((category) => <option key={category} value={category}>{category.replaceAll("_", " ")}</option>)}</select></label>
         <label className="grid gap-1.5 text-sm font-semibold">Select file<input name="file" type="file" required accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" onChange={(event) => { setSelectedFile(event.currentTarget.files?.[0]); setUploadError(""); }} className="min-h-11 rounded-lg border border-[var(--border)] bg-white p-2 text-sm" /></label>
         <PrimaryButton disabled={busy || !selectedFile} className="inline-flex items-center justify-center gap-2"><Upload aria-hidden size={18} />{busy ? "Uploading…" : "Upload"}</PrimaryButton>

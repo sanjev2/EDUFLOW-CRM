@@ -8,6 +8,7 @@ import { AdminAssignments } from "./admin-assignments";
 import { AdminSecurityAlerts } from "./admin-events";
 import { AdminUsers } from "./admin-users";
 import { AdminUserDetail } from "./admin-user-detail";
+import { StaffApplicationDetail } from "./staff-application-detail";
 
 const navigation = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn(), pathname: "/dashboard/student" }));
 vi.mock("next/navigation", () => ({
@@ -92,7 +93,7 @@ describe("EduFlow CRM interface", () => {
     render(<AdminAssignments />);
     const button = await screen.findByRole("button", { name: "Confirm assignment" });
     expect(button).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Student"), { target: { value: "s1" } });
+    fireEvent.change(screen.getByLabelText("Application"), { target: { value: "a1" } });
     fireEvent.change(screen.getByLabelText("Counsellor"), { target: { value: "c1" } });
     fireEvent.change(screen.getByLabelText("Audit reason"), { target: { value: "too short" } });
     expect(button).toBeDisabled();
@@ -130,21 +131,22 @@ describe("EduFlow CRM interface", () => {
     expect(screen.getByRole("heading", { name: "Study preferences" })).toBeInTheDocument();
   });
   it("shows the important empty enquiry state", async () => {
-    vi.stubGlobal("fetch", vi.fn(() => response({ application: null, history: [], assignment: null })));
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) => String(input).includes("/auth/me")
+      ? response({ user: { role: "STUDENT", status: "ACTIVE", mfaEnabled: false }, passwordExpired: false, mfaComplete: true })
+      : response({ applications: [] })));
     render(<StudentApplication />);
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Create your first enquiry" })).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "Create enquiry" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Use New enquiry to record your first application.")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "New enquiry" })).toBeInTheDocument();
   });
-  it("sends the enquiry mutation, bypasses stale GET caching and shows unassigned guidance", async () => {
+  it("sends the enquiry mutation, bypasses stale GET caching and shows the new application", async () => {
     let created = false;
     const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
       const url = String(input);
+      if (url.includes("/auth/me")) return response({ user: { role: "STUDENT", status: "ACTIVE", mfaEnabled: false }, passwordExpired: false, mfaComplete: true });
       if (url.includes("/auth/csrf")) return response({ csrfToken: "test-csrf" });
-      if (url.includes("/applications/current")) {
+      if (url.includes("/applications/mine")) {
         expect(options?.cache).toBe("no-store");
-        return response(created
-          ? { application: { _id: "a1", stage: "ENQUIRY" }, history: [], assignment: null }
-          : { application: null, history: [], assignment: null });
+        return response({ applications: created ? [{ _id: "a1", stage: "ENQUIRY_RECORDED", active: true, preferredCountry: "Canada", assignmentState: "UNASSIGNED", checklist: [], updatedAt: new Date().toISOString() }] : [] });
       }
       if (url.endsWith("/applications") && options?.method === "POST") {
         created = true;
@@ -154,15 +156,21 @@ describe("EduFlow CRM interface", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<StudentApplication />);
-    fireEvent.click(await screen.findByRole("button", { name: "Create enquiry" }));
-    expect(await screen.findByText("No active counsellor is currently available. Your enquiry is recorded and awaiting assignment.")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "New enquiry" }));
+    fireEvent.change(screen.getByLabelText("Destination country"), { target: { value: "Canada" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create enquiry" }));
+    expect(await screen.findByText("Your new enquiry was recorded.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Awaiting" }));
+    expect(screen.getByText("Canada")).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([input, options]) =>
       String(input).endsWith("/applications") && (options as RequestInit | undefined)?.method === "POST")).toBe(true);
   });
   it("renders an application timeline without exposing internal notes", async () => {
-    vi.stubGlobal("fetch", vi.fn(() => response({ application: { _id: "a1", stage: "COUNSELLING" }, assignment: null, history: [{ _id: "h1", newStage: "ENQUIRY", reason: "Student created enquiry", createdAt: new Date().toISOString() }] })));
-    render(<StudentApplication />);
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Stage history" })).toBeInTheDocument());
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) => String(input).includes("/auth/me")
+      ? response({ user: { role: "STUDENT", status: "ACTIVE", mfaEnabled: false }, passwordExpired: false, mfaComplete: true })
+      : response({ application: { _id: "a1", stage: "COUNSELLING", active: true, assignmentState: "UNASSIGNED", checklist: [], updatedAt: new Date().toISOString() }, legalNotice: "No legal guarantee.", history: [{ _id: "h1", newStage: "ENQUIRY_RECORDED", reason: "Student created enquiry", createdAt: new Date().toISOString() }] })));
+    render(<StudentApplication applicationId="a1" />);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Application history" })).toBeInTheDocument());
     expect(screen.getByText("Student created enquiry")).toBeInTheDocument();
     expect(screen.queryByText(/internal note/i)).not.toBeInTheDocument();
   });
@@ -174,26 +182,21 @@ describe("EduFlow CRM interface", () => {
       const url = String(input);
       if (url.includes("/auth/me")) return response({ user: { role: "STUDENT", status: "ACTIVE", mfaEnabled: false }, passwordExpired: false, mfaComplete: true });
       if (url.includes("/auth/csrf")) return response({ csrfToken: "test-csrf" });
-      if (url.includes("/applications/current/submit")) {
+      if (url.includes("/applications/a1/submit")) {
         submitted = true;
         expect(options?.headers).toMatchObject({ "idempotency-key": "12345678123412341234123456789abc12345678123412341234123456789abc" });
         expect(options?.body).toBe(JSON.stringify({ confirm: true }));
-        return response({ receipt: { reference: "EDF-20260724-ABC123", submittedAt: "2026-07-24T10:00:00.000Z", integrity: "a".repeat(64), stage: "APPLICATION_SUBMITTED" } });
+        return response({ receipt: { reference: "EDF-20260724-ABC123", submittedAt: "2026-07-24T10:00:00.000Z", integrity: "a".repeat(64), stage: "APPLICATION_PREPARATION" } });
       }
-      return response({
-        application: { _id: "a1", stage: submitted ? "APPLICATION_SUBMITTED" : "DOCUMENTS_PENDING" },
-        assignment: null,
-        history: [],
-      });
+      return response({ application: { _id: "a1", stage: submitted ? "APPLICATION_PREPARATION" : "DOCUMENTS_PENDING", active: true, assignmentState: "UNASSIGNED", checklist: [], updatedAt: new Date().toISOString() }, legalNotice: "No legal guarantee.", history: [] });
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<StudentApplication />);
+    render(<StudentApplication applicationId="a1" />);
     const button = await screen.findByRole("button", { name: "Submit application" });
     button.focus();
     fireEvent.click(button);
     expect(await screen.findByRole("button", { name: "Submitting…" })).toBeDisabled();
     expect(await screen.findByRole("status")).toHaveTextContent("Application submitted securely");
-    expect(screen.getByText(/EDF-20260724-ABC123/)).toBeInTheDocument();
     expect(confirm).toHaveBeenCalledOnce();
   });
   it("keeps the application form usable and shows a safe submission error", async () => {
@@ -203,13 +206,57 @@ describe("EduFlow CRM interface", () => {
       const url = String(input);
       if (url.includes("/auth/me")) return response({ user: { role: "STUDENT", status: "ACTIVE", mfaEnabled: false }, passwordExpired: false, mfaComplete: true });
       if (url.includes("/auth/csrf")) return response({ csrfToken: "test-csrf" });
-      if (url.includes("/applications/current/submit")) return Promise.resolve({ ok: false, status: 422, json: () => Promise.resolve({ error: { code: "APPLICATION_NOT_READY", message: "Complete the required application information." } }) } as Response);
-      return response({ application: { _id: "a1", stage: "DOCUMENTS_PENDING" }, assignment: null, history: [] });
+      if (url.includes("/applications/a1/submit")) return Promise.resolve({ ok: false, status: 422, json: () => Promise.resolve({ error: { code: "APPLICATION_NOT_READY", message: "Complete the required application information." } }) } as Response);
+      return response({ application: { _id: "a1", stage: "DOCUMENTS_PENDING", active: true, assignmentState: "UNASSIGNED", checklist: [], updatedAt: new Date().toISOString() }, legalNotice: "No legal guarantee.", history: [] });
     }));
-    render(<StudentApplication />);
+    render(<StudentApplication applicationId="a1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Submit application" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Complete the required application information.");
     expect(screen.getByRole("button", { name: "Submit application" })).toBeEnabled();
+  });
+  it("filters multiple applications and preserves an individual detail link", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) => String(input).includes("/auth/me")
+      ? response({ user: { role: "STUDENT", status: "ACTIVE", mfaEnabled: false }, passwordExpired: false, mfaComplete: true })
+      : response({ applications: [
+        { _id: "active-1", stage: "COUNSELLING", active: true, preferredCountry: "Canada", assignedCounsellorId: { fullName: "Counsellor" }, assignmentState: "ASSIGNED", checklist: [{ key: "one", status: "ACCEPTED" }], updatedAt: new Date().toISOString() },
+        { _id: "archived-1", stage: "DISCONTINUED", active: false, archivedAt: new Date().toISOString(), preferredCountry: "Australia", assignmentState: "ASSIGNED", checklist: [], updatedAt: new Date().toISOString() },
+      ] })));
+    render(<StudentApplication />);
+    expect(await screen.findByText("Canada")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View application" })).toHaveAttribute("href", "/applications/active-1");
+    fireEvent.click(screen.getByRole("tab", { name: "Archived" }));
+    expect(screen.getByText("Australia")).toBeInTheDocument();
+  });
+  it("requires counsellor confirmation before discontinuing only the selected application", async () => {
+    vi.spyOn(window, "prompt").mockReturnValue("Student selected a different programme");
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetchMock = vi.fn((...args: [input: string | URL | Request, options?: RequestInit]) => {
+      const [input] = args;
+      const url = String(input);
+      if (url.includes("/auth/me")) return response({ user: { role: "COUNSELLOR", status: "ACTIVE", mfaEnabled: false }, passwordExpired: false, mfaComplete: true });
+      if (url.includes("/auth/csrf")) return response({ csrfToken: "csrf" });
+      return response({ application: { _id: "a1", stage: "COUNSELLING", checklist: [], studentId: "s1" }, history: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<StaffApplicationDetail applicationId="a1" role="COUNSELLOR" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Discontinue process" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input, options]) => String(input).includes("/a1/discontinue") && (options as RequestInit).method === "POST")).toBe(true));
+  });
+  it("runs administrator backlog assignment and renders safe counts", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) return response({ user: { role: "ADMIN", status: "ACTIVE", mfaEnabled: true }, passwordExpired: false, mfaComplete: true });
+      if (url.includes("/auth/csrf")) return response({ csrfToken: "csrf" });
+      if (url.includes("/assignments/counsellors")) return response({ counsellors: [{ _id: "c1", fullName: "Counsellor", email: "c@example.test", assignmentCount: 0 }] });
+      if (url.includes("/assignments/unassigned")) return response({ applications: [{ _id: "a1", studentId: { _id: "s1", fullName: "Student", email: "s@example.test" }, stage: "ENQUIRY_RECORDED" }] });
+      if (url.includes("/assignments/automatic") && options?.method === "POST") return response({ assigned: 1, remaining: 0, skipped: 0 });
+      return response({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AdminAssignments />);
+    fireEvent.click(await screen.findByRole("button", { name: "Run automatic assignment" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Assigned 1; remaining 0; skipped 0");
   });
 
   it("opens the accessible counsellor invitation dialog, focuses it and restores focus on Escape", async () => {

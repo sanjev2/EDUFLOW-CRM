@@ -10,7 +10,7 @@ type ShellUser = { id: string; fullName: string; email: string; role: AppRole; s
 const navigation = {
   STUDENT: [
     ["Dashboard", "/dashboard/student", LayoutDashboard], ["My Profile", "/profile", UserRound],
-    ["My Application", "/application", FileText], ["Documents", "/documents", BookOpen], ["Privacy & data", "/privacy", Database], ["Security", "/security", ShieldCheck],
+    ["My Applications", "/application", FileText], ["Documents", "/documents", BookOpen], ["Privacy & data", "/privacy", Database], ["Security", "/security", ShieldCheck],
   ],
   COUNSELLOR: [
     ["Dashboard", "/dashboard/counsellor", LayoutDashboard], ["Assigned Students", "/students", Users],
