@@ -46,9 +46,18 @@
 - Administrators use dedicated assignment and stage-correction endpoints with mandatory reasons. Normal profile or application updates cannot change protected fields.
 - Application transitions use a server-side allow-list state machine and append immutable history rather than rewriting evidence.
 - Automatic assignment selects the lowest active workload, then email and `_id` for deterministic ties. Partial unique indexes prevent duplicate active assignments/applications.
-- Automatic follow-up tasks use a unique `enquiry-follow-up:<studentId>` key. Repeated requests cannot duplicate the task.
+- Automatic follow-up tasks use a unique `enquiry-follow-up:<applicationId>` key. Repeated requests cannot duplicate the task.
 - Counselling notes are plain text; the frontend renders them as React text nodes rather than HTML.
+
+## IP policy availability
+
+- Health checks always remain available, and public/student/counsellor routes continue operating if the IP-rule database lookup fails.
+- Administrator, assignment and privileged application-correction routes fail with a generic 503 when the IP policy cannot be evaluated. They do not silently bypass an allow or deny rule.
+- The failure is logged without the client IP or credentials. When MongoDB remains connected but the policy query fails, one unacknowledged sanitized high-severity alert is upserted.
+- This selective fail-closed policy protects sensitive administration without turning a policy-store incident into a denial of all public service.
 
 ## Dependency audit
 
-The baseline audit contained 4 moderate, 3 high and 1 critical finding. Updating Vitest and its Vite toolchain removed the critical and all development-tool findings. The remaining Next report is an aggregate of bundled PostCSS `<=8.5.11` and optional Sharp `<0.35.0`: PostCSS processes developer-owned CSS only during the build, and EduFlow currently does not invoke Next image optimization on untrusted images, so neither affected path is runtime-reachable in the current application. npm offers only an incorrect downgrade to Next 9.3.3; no `--force` or breaking downgrade was used. These three findings remain tracked pending a compatible Next release.
+The Phase 1 production audit reports three high-severity findings through `next`: bundled PostCSS `<=8.5.17` and Sharp `<0.35.0`. EduFlow was upgraded within its supported major line from Next 16.2.11 to 16.2.12, but the current stable release still declares the affected transitive versions. npm proposes only an unsafe forced downgrade to Next 9.3.3, so no force fix or incompatible downgrade is accepted.
+
+PostCSS handles project-controlled styles during the build, and EduFlow does not currently process user-controlled images through Next image optimization. This reduces current reachability but is not an exemption or a clean audit. The CI high-severity gate remains intentionally failing until a supported upstream release removes the advisories or a separately reviewed, time-bounded exception is approved.

@@ -35,7 +35,7 @@ jobs:
         run: node scripts/check-repository-security.mjs
 
       - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=critical
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Validate Compose configuration
         env:
@@ -44,13 +44,25 @@ jobs:
           SESSION_SECRET: ci-session-secret-at-least-thirty-two-characters
           FIELD_ENCRYPTION_KEY: ci-encryption-key-at-least-thirty-two-chars
           PASSWORD_PEPPER: ci-password-pepper-not-secret
+        run: docker compose config --quiet
+
+      - name: Validate production Compose overlay
+        env:
+          MONGODB_ROOT_USERNAME: ci-user
+          MONGODB_ROOT_PASSWORD: ci-mongodb-password-not-secret
+          SESSION_SECRET: ci-session-secret-at-least-thirty-two-characters
+          FIELD_ENCRYPTION_KEY: ci-encryption-key-at-least-thirty-two-chars
+          PASSWORD_PEPPER: ci-password-pepper-not-secret
+          FRONTEND_URL: https://app.example.invalid
+          PUBLIC_APP_URL: https://app.example.invalid
+          NEXT_PUBLIC_API_URL: https://api.example.invalid/api/v1
           SMTP_HOST: smtp.example.invalid
           SMTP_PORT: "587"
           SMTP_SECURE: "false"
           SMTP_USER: ci@example.invalid
           SMTP_PASSWORD: ci-smtp-password-not-secret
           EMAIL_FROM_ADDRESS: ci@example.invalid
-        run: docker compose config --quiet
+        run: docker compose -f compose.yaml -f compose.production.yaml config --quiet
 
   containers:
     runs-on: ubuntu-24.04

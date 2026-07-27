@@ -6,12 +6,12 @@ Official actions are pinned to full commit SHAs. npm uses the committed lockfile
 
 ## Dependency findings
 
-`npm audit --omit=dev --audit-level=critical` is non-mutating and fails the workflow for critical production findings. Findings are visible in job output; the workflow never runs `npm audit fix` or suppresses results.
+`npm audit --omit=dev --audit-level=high` is non-mutating and fails the workflow for high or critical production findings. Findings are visible in job output; the workflow never runs `npm audit fix` or suppresses results.
 
-The accepted Next.js transitive findings and their reachability assessment are recorded in `SECURITY_DECISIONS.md`. They remain visible technical debt, not an exemption for future critical issues. Any new finding requires review of affected version, reachability, upstream fix and regression risk.
+Unresolved upstream findings and their reachability assessment are recorded in `SECURITY_DECISIONS.md`. They remain visible technical debt and deliberately fail the security job until an upstream-safe version is available or a narrow, reviewed exception is approved. Any finding requires review of affected version, reachability, upstream fix and regression risk.
 
 ## Repository checks
 
 The local/CI repository-security script enumerates Git-tracked files, rejects `.env`, runtime mail, uploads, raw evidence and credential containers, and scans text for high-confidence credential patterns. It prints only rule and filename, never matched content.
 
-Compose validation uses explicit non-secret CI placeholders. Image jobs build both Dockerfiles without publishing. Local Docker runtime validation remains required when Docker is available.
+Compose validation covers both the localhost container-development file and the HTTPS production overlay using explicit non-secret CI placeholders. Image jobs build both Dockerfiles without publishing. Local Docker runtime validation remains required when Docker is available.
