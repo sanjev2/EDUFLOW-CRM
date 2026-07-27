@@ -6,9 +6,9 @@ Official actions are pinned to full commit SHAs. npm uses the committed lockfile
 
 ## Dependency findings
 
-`npm audit --omit=dev --audit-level=high` is non-mutating and fails the workflow for high or critical production findings. Findings are visible in job output; the workflow never runs `npm audit fix` or suppresses results.
+`scripts/audit-production.mjs` runs the non-mutating `npm audit --omit=dev --audit-level=high --json` check and fails the workflow for high or critical production findings. Findings are visible in job output; the workflow never runs `npm audit fix`.
 
-Unresolved upstream findings and their reachability assessment are recorded in `SECURITY_DECISIONS.md`. They remain visible technical debt and deliberately fail the security job until an upstream-safe version is available or a narrow, reviewed exception is approved. Any finding requires review of affected version, reachability, upstream fix and regression risk.
+The exact time-bounded exception for the current upstream Next.js findings is recorded in `DEPENDENCY_RISK_ACCEPTANCE.md`. The gate validates advisory IDs, installed dependency nodes and its review deadline; it does not ignore unrelated findings or use `continue-on-error`. Any new or changed finding fails and requires review of affected version, reachability, upstream fix and regression risk.
 
 ## Repository checks
 

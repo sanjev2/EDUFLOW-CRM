@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run --no-file-parallelism",
-    "bootstrap:admin": "tsx src/scripts/bootstrap-admin.ts"
+    "bootstrap:admin": "tsx src/scripts/bootstrap-admin.ts",
+    "manual-test:prepare": "tsx src/scripts/prepare-manual-testing.ts"
   },
   "dependencies": {
     "argon2": "^0.45.1",

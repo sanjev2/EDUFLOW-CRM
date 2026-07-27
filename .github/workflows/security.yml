@@ -35,7 +35,7 @@ jobs:
         run: node scripts/check-repository-security.mjs
 
       - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=high
+        run: node scripts/audit-production.mjs
 
       - name: Validate Compose configuration
         env:
