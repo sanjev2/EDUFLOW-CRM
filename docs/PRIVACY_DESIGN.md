@@ -22,3 +22,4 @@ The browser reads the selected file in memory only. It does not place import con
 - Export retention and deletion are controlled by the user's device after download.
 - The in-memory rate limiter is suitable for the single-process coursework environment; distributed deployment requires a shared limiter.
 - Document file bytes require their existing authenticated download flow and are intentionally outside the JSON export.
+- EduFlow does not currently run an automated personal-data retention or deletion scheduler. Before production, the consultancy must approve documented retention periods for accounts, applications, documents, audit records and backups, then implement reviewed deletion/anonymisation jobs with legal-hold and audit safeguards.

@@ -1,5 +1,5 @@
 import request from "supertest";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { generate, generateSecret } from "otplib";
 import { z } from "zod";
 import mongoose from "mongoose";
@@ -68,6 +68,22 @@ describe("registration and verification", () => {
 });
 
 describe("login controls", () => {
+  it("rejects object and nested MongoDB operator credentials before authentication", async () => {
+    const lookup = vi.spyOn(User, "findOne");
+    const objectValue = await request(app).post("/api/v1/auth/login")
+      .set("Origin", "http://localhost:3100")
+      .send({ email: { $ne: "" }, password: { $gt: "" } })
+      .expect(400);
+    const nestedOperator = await request(app).post("/api/v1/auth/login")
+      .set("Origin", "http://localhost:3100")
+      .send({ email: { value: { $regex: ".*" } }, password: strong })
+      .expect(400);
+    expect(objectValue.body.error).toMatchObject({ code: "VALIDATION_ERROR", message: expect.any(String) });
+    expect(nestedOperator.body.error).toMatchObject({ code: "VALIDATION_ERROR", message: expect.any(String) });
+    expect(JSON.stringify(objectValue.body)).not.toContain("Mongo");
+    expect(lookup).not.toHaveBeenCalled();
+    lookup.mockRestore();
+  });
   it("emits CORS approval only for the exact trusted frontend Origin", async () => {
     const trusted = await request(app).options("/api/v1/auth/login")
       .set("Origin", "http://localhost:3100")
@@ -144,6 +160,17 @@ describe("login controls", () => {
 });
 
 describe("sessions and CSRF", () => {
+  it("rejects missing, random and modified opaque session cookies without partial matching", async () => {
+    await registerAndVerify();
+    const signedIn = await login().expect(200);
+    const validCookie = cookie(signedIn);
+    const raw = validCookie.split("=")[1]!.split(";")[0]!;
+    const modified = `${raw.slice(0, -1)}${raw.endsWith("a") ? "b" : "a"}`;
+    await request(app).get("/api/v1/auth/me").expect(401);
+    await request(app).get("/api/v1/auth/me").set("Cookie", "eduflow_session=random-session-token").expect(401);
+    await request(app).get("/api/v1/auth/me").set("Cookie", `eduflow_session=${modified}`).expect(401);
+    await request(app).get("/api/v1/auth/me").set("Cookie", validCookie).expect(200);
+  });
   it("returns current user and lists/revokes sessions", async () => {
     await registerAndVerify();
     const first = await login().expect(200); const firstCookie = cookie(first); const csrf = first.body.csrfToken as string;

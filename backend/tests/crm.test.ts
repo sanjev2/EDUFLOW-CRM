@@ -105,6 +105,33 @@ describe("enquiry, assignment and state history", () => {
     expect(await CounsellorAssignment.countDocuments({ studentId: student.user._id, active: true })).toBe(1);
     expect(await Task.countDocuments({ automationKey: `enquiry-follow-up:${String(application._id)}` })).toBe(1);
   });
+  it("balances a long assignment sequence across eligible counsellors with deterministic ties", async () => {
+    const first = await identity("COUNSELLOR", "a-balanced");
+    const second = await identity("COUNSELLOR", "b-balanced");
+    const third = await identity("COUNSELLOR", "c-balanced");
+    const ineligible = await identity("COUNSELLOR", "0-suspended");
+    await User.updateOne({ _id: ineligible.user._id }, { status: "SUSPENDED" });
+    const applications: InstanceType<typeof Application>[] = [];
+    for (let index = 0; index < 9; index += 1) {
+      const student = await identity("STUDENT", `balanced-${index}`);
+      const application = await Application.create({
+        studentId: student.user._id,
+        stage: "ENQUIRY_RECORDED",
+        active: true,
+        preferredCountry: "Canada",
+      });
+      applications.push(application);
+      await assignLeastLoaded(student.user._id);
+    }
+    expect(String((await Application.findById(applications[0]!._id))!.assignedCounsellorId)).toBe(String(first.user._id));
+    const counts = await Promise.all([first, second, third].map(({ user }) =>
+      Application.countDocuments({ assignedCounsellorId: user._id, active: true })));
+    expect(counts).toEqual([3, 3, 3]);
+    expect(await Application.countDocuments({ assignedCounsellorId: ineligible.user._id })).toBe(0);
+    expect(Math.max(...counts) - Math.min(...counts)).toBeLessThanOrEqual(1);
+    expect(await CounsellorAssignment.countDocuments({ active: true })).toBe(9);
+    expect(await Task.countDocuments({ automationKey: /^enquiry-follow-up:/ })).toBe(9);
+  });
   it("enforces assigned forward transitions and returns 409 for invalid transitions", async () => {
     const student = await identity("STUDENT"); const counsellor = await identity("COUNSELLOR");
     const application = await Application.create({ studentId: student.user._id, stage: "ENQUIRY", active: true });
@@ -282,6 +309,23 @@ describe("multiple applications and detailed lifecycle", () => {
     expect(restored).toMatchObject({ stage: "DISCONTINUED", active: false });
     expect(restored!.archivedAt).toBeUndefined();
   });
+  it("denies application-stage correction without current MFA assurance and preserves the stage", async () => {
+    const student = await identity("STUDENT");
+    const admin = await identity("ADMIN", "without-mfa");
+    await Session.updateOne({ userId: admin.user._id }, { mfaComplete: false });
+    const application = await Application.create({
+      studentId: student.user._id,
+      stage: "PROFILE_ASSESSMENT",
+      active: true,
+      preferredCountry: "Canada",
+    });
+    const response = await mutate("post", `/api/v1/crm/applications/${String(application._id)}/correct-stage`, admin)
+      .send({ stage: "COUNSELLING", reason: "Correct an administrator-confirmed stage error", confirmation: "CORRECT STAGE" })
+      .expect(403);
+    expect(response.body.error.code).toBe("ADMIN_MFA_ENROLMENT_REQUIRED");
+    expect((await Application.findById(application._id))!.stage).toBe("PROFILE_ASSESSMENT");
+    expect(await ApplicationStageHistory.countDocuments({ applicationId: application._id })).toBe(0);
+  });
   it("reconciles the unassigned backlog oldest-first and protects the administrator action", async () => {
     const admin = await identity("ADMIN"); const firstStudent = await identity("STUDENT", "first"); const secondStudent = await identity("STUDENT", "second");
     const first = await Application.create({ studentId: firstStudent.user._id, stage: "ENQUIRY_RECORDED", active: true, preferredCountry: "Canada", createdAt: new Date(Date.now() - 10_000) });
@@ -382,5 +426,17 @@ describe("admin assignments, notes, tasks and summaries", () => {
     await IpAccessRule.create({ cidr: "203.0.113.5/32", action: "ALLOW", reason: "Allow-list default deny test" });
     await request(app).get("/api/v1/access/student").set("Cookie", student.cookie).expect(403);
     await IpAccessRule.deleteMany({});
+  });
+  it("fails closed for sensitive routes when IP policy lookup fails but keeps public routes available", async () => {
+    const admin = await identity("ADMIN", "ip-policy-failure");
+    const failedQuery = () => ({ lean: () => Promise.reject(new Error("simulated policy database failure")) });
+    const lookup = vi.spyOn(IpAccessRule, "find");
+    lookup.mockReturnValueOnce(failedQuery() as never);
+    const denied = await request(app).get("/api/v1/admin/audit").set("Cookie", admin.cookie).expect(503);
+    expect(denied.body.error.code).toBe("IP_ACCESS_POLICY_UNAVAILABLE");
+    expect(await SecurityAlert.countDocuments({ type: "IP_ACCESS_POLICY_UNAVAILABLE", severity: "HIGH" })).toBe(1);
+    lookup.mockReturnValueOnce(failedQuery() as never);
+    await request(app).post("/api/v1/auth/captcha").send({}).expect(200);
+    lookup.mockRestore();
   });
 });

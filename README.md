@@ -22,7 +22,7 @@ API: `http://localhost:5001/api/health`
 
 For two terminals, use `npm run dev:frontend` in one root terminal and `npm run dev:backend` in the other. The direct workspace forms (`npm run dev --workspace=@eduflow/frontend` and `npm run dev --workspace=@eduflow/backend`) are also supported. Every development command loads the same ignored root `.env`; do not run `next` or `tsx` directly.
 
-Private files are stored beneath the backend-controlled `UPLOAD_ROOT` (default `uploads`) and are never exposed as static files. PDF, JPEG and PNG files up to 5 MB are checked by extension, declared type and file signature. Local storage does not include a malware-scanning engine; production requires hardened storage, backups and malware scanning.
+Private files are stored beneath the backend-controlled `UPLOAD_ROOT` (default `uploads`) and are never exposed as static files. PDF, JPEG and PNG files up to 5 MB are checked by extension, declared type, file signature and format structure. These controls are not antivirus: EduFlow does not include malware scanning or quarantine. Production deployment requires a malware-scanning or quarantine service and an operational process for failed or unavailable scans.
 
 ## Email delivery
 
