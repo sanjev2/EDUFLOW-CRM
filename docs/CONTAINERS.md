@@ -1,10 +1,10 @@
-# Container Environment
+# Container Environments
 
-The Compose environment is production-oriented and separate from the normal `npm run dev` workflow.
+The default Compose file is a localhost container-development environment, separate from the normal `npm run dev` workflow. It runs built images but deliberately uses `NODE_ENV=development` so the browser-facing `http://localhost` URLs do not weaken or contradict the backend's real production HTTPS validation.
 
 ## Runtime configuration
 
-Docker Compose reads the ignored root `.env` only at runtime. Add URL-safe values for `MONGODB_ROOT_USERNAME` and `MONGODB_ROOT_PASSWORD`, plus the existing production session, encryption, password-pepper and SMTP settings. `EMAIL_DELIVERY_MODE` is forced to `smtp`; production outbox delivery is prohibited. Never place real values in Dockerfiles, Compose, documentation or Git.
+Docker Compose reads the ignored root `.env` only at runtime. Add URL-safe values for `MONGODB_ROOT_USERNAME` and `MONGODB_ROOT_PASSWORD`, plus the session, encryption and password-pepper settings. Local containers default to the development outbox; configured SMTP remains available by setting `EMAIL_DELIVERY_MODE=smtp` and the validated SMTP variables. Never place real values in Dockerfiles, Compose, documentation or Git.
 
 The browser-facing API URL is intentionally public configuration and is built as `http://localhost:5001/api/v1`.
 
@@ -20,6 +20,15 @@ Invoke-WebRequest http://localhost:3100/login -UseBasicParsing
 docker compose logs --no-log-prefix backend
 docker compose down
 ```
+
+Real production deployment must use HTTPS browser-facing URLs and SMTP. The production overlay keeps those requirements explicit and has no insecure URL defaults:
+
+```powershell
+docker compose -f compose.yaml -f compose.production.yaml config
+docker compose -f compose.yaml -f compose.production.yaml up -d
+```
+
+Before using the overlay, privately set `FRONTEND_URL`, `PUBLIC_APP_URL` and `NEXT_PUBLIC_API_URL` to the deployed HTTPS origins, along with the required SMTP and secret values. The backend still rejects HTTP URLs and development secrets in production.
 
 `docker compose down` stops and removes disposable containers and networks but preserves named MongoDB and private-upload volumes. Never add `--volumes` when real user data must be retained.
 
@@ -44,3 +53,4 @@ Volume deletion is intentionally a separate manual decision.
 - Application containers use read-only roots, limited temporary filesystems, dropped capabilities and `no-new-privileges`.
 - MongoDB and uploads use persistent named volumes. Resource and graceful-stop limits are declared.
 - `.dockerignore` excludes secrets, runtime mail, uploads, evidence, screenshots, build output and Git metadata from both image contexts.
+- Runtime validation still requires a host with Docker; static Compose validation alone does not prove that the containers start.

@@ -14,4 +14,16 @@ describe("development startup environment", () => {
     expect(backend.scripts.dev).toContain("dotenv -e ../.env");
     expect(["process environment", "root .env"]).toContain(configurationSource);
   });
+  it("separates localhost container development from HTTPS production configuration", () => {
+    const localCompose = readFileSync(path.resolve("..", "compose.yaml"), "utf8");
+    const productionOverlay = readFileSync(path.resolve("..", "compose.production.yaml"), "utf8");
+    expect(localCompose).toContain("NODE_ENV: development");
+    expect(localCompose).toContain("FRONTEND_URL: http://localhost:3100");
+    expect(localCompose).toContain("PUBLIC_APP_URL: http://localhost:3100");
+    expect(productionOverlay).toContain("NODE_ENV: production");
+    expect(productionOverlay).toContain("FRONTEND_URL: ${FRONTEND_URL:?");
+    expect(productionOverlay).toContain("PUBLIC_APP_URL: ${PUBLIC_APP_URL:?");
+    expect(productionOverlay).toContain("NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?");
+    expect(productionOverlay).not.toMatch(/https?:\/\/localhost/);
+  });
 });

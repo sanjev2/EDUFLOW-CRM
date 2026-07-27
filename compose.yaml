@@ -34,23 +34,23 @@ services:
     restart: unless-stopped
     init: true
     environment:
-      NODE_ENV: production
+      NODE_ENV: development
       BACKEND_PORT: 5001
       FRONTEND_URL: http://localhost:3100
       PUBLIC_APP_URL: http://localhost:3100
       MONGODB_URI: mongodb://${MONGODB_ROOT_USERNAME}:${MONGODB_ROOT_PASSWORD}@mongo:27017/eduflow_crm?authSource=admin
       UPLOAD_ROOT: /app/uploads
-      EMAIL_DELIVERY_MODE: smtp
+      EMAIL_DELIVERY_MODE: ${EMAIL_DELIVERY_MODE:-outbox}
       SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in the local .env}
       FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?Set FIELD_ENCRYPTION_KEY in the local .env}
       PASSWORD_PEPPER: ${PASSWORD_PEPPER:?Set PASSWORD_PEPPER in the local .env}
-      SMTP_HOST: ${SMTP_HOST:?Set SMTP_HOST in the local .env}
-      SMTP_PORT: ${SMTP_PORT:?Set SMTP_PORT in the local .env}
-      SMTP_SECURE: ${SMTP_SECURE:?Set SMTP_SECURE in the local .env}
-      SMTP_USER: ${SMTP_USER:?Set SMTP_USER in the local .env}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:?Set SMTP_PASSWORD in the local .env}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-EduFlow}
-      EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:?Set EMAIL_FROM_ADDRESS in the local .env}
+      EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-}
     ports:
       - "127.0.0.1:5001:5001"
     volumes:
@@ -68,6 +68,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
+      - /app/.runtime:size=8m,uid=100,mode=0700
     mem_limit: 512m
     cpus: 1.0
     stop_grace_period: 20s
