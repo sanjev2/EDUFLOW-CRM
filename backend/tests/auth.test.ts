@@ -6,13 +6,13 @@ import mongoose from "mongoose";
 import { app } from "../src/app.js";
 import { User } from "../src/models/User.js";
 import { Session } from "../src/models/Session.js";
-import { LoginAttempt } from "../src/models/Security.js";
-import { MfaChallenge } from "../src/models/Security.js";
+import { LoginAttempt, MfaChallenge, SecurityAlert } from "../src/models/Security.js";
 import { PasswordResetToken } from "../src/models/Tokens.js";
 import { AuditLog } from "../src/models/AuditLog.js";
 import { hashPassword } from "../src/security/password.js";
 import { decrypt, encrypt, keyedHash, sha256 } from "../src/security/crypto.js";
 import { clearDevelopmentOutbox, developmentOutbox } from "../src/security/outbox.js";
+import { progressiveLoginDelayMs } from "../src/routes/auth.js";
 
 const strong = "Correct-Horse7-Battery!";
 beforeAll(async () => {
@@ -68,6 +68,13 @@ describe("registration and verification", () => {
 });
 
 describe("login controls", () => {
+  it("calculates progressive login delays deterministically and caps them", () => {
+    expect(progressiveLoginDelayMs(0)).toBe(0);
+    expect(progressiveLoginDelayMs(1)).toBe(200);
+    expect(progressiveLoginDelayMs(3)).toBe(600);
+    expect(progressiveLoginDelayMs(5)).toBe(1000);
+    expect(progressiveLoginDelayMs(20)).toBe(1000);
+  });
   it("rejects object and nested MongoDB operator credentials before authentication", async () => {
     const lookup = vi.spyOn(User, "findOne");
     const objectValue = await request(app).post("/api/v1/auth/login")
@@ -146,6 +153,62 @@ describe("login controls", () => {
     await LoginAttempt.insertMany(Array.from({ length: 20 }, () => ({ emailHash: "other", ipHash: keyedHash("::ffff:127.0.0.1"), outcome: "FAILURE", createdAt: new Date() })));
     await login("another@example.test").expect(429);
   });
+  it("keeps active lockout immutable for correct and incorrect credentials, then permits login after expiry", async () => {
+    const { user } = await registerAndVerify();
+    const lockedUntil = new Date(Date.now() + 15 * 60_000);
+    await User.updateOne({ _id: user!._id }, { failedLoginCount: 5, lockedUntil });
+    await SecurityAlert.create({ userId: user!._id, type: "ACCOUNT_LOCKOUT", severity: "HIGH", metadata: {} });
+
+    await login(user!.email, strong).expect(401);
+    await login(user!.email, "Wrong-Password9!").expect(401);
+
+    const locked = await User.findById(user!._id).select("+failedLoginCount");
+    expect(locked!.failedLoginCount).toBe(5);
+    expect(locked!.lockedUntil?.getTime()).toBe(lockedUntil.getTime());
+    expect(await SecurityAlert.countDocuments({ userId: user!._id, type: "ACCOUNT_LOCKOUT" })).toBe(1);
+
+    await User.updateOne({ _id: user!._id }, { lockedUntil: new Date(Date.now() - 1_000) });
+    await login(user!.email, strong).expect(200);
+  });
+  it("clears account CAPTCHA and delay state after success without clearing IP-wide failures", async () => {
+    const { user } = await registerAndVerify();
+    const emailHash = keyedHash(user!.email);
+    const ipHash = keyedHash("::ffff:127.0.0.1");
+    await LoginAttempt.insertMany(Array.from({ length: 3 }, () => ({
+      emailHash, ipHash, outcome: "FAILURE", createdAt: new Date(),
+    })));
+    const challenge = await request(app).post("/api/v1/auth/captcha").send({}).expect(200);
+    const numbers = (challenge.body.prompt as string).match(/\d+/g)!.map(Number);
+    await request(app).post("/api/v1/auth/login")
+      .set("Origin", "http://localhost:3100")
+      .send({
+        email: user!.email,
+        password: strong,
+        captchaId: challenge.body.challengeId,
+        captchaAnswer: String(numbers[0]! + numbers[1]!),
+      })
+      .expect(200);
+
+    await login(user!.email, "Wrong-Password9!").expect(401);
+    expect(await LoginAttempt.countDocuments({ emailHash, outcome: "FAILURE" })).toBe(4);
+
+    await LoginAttempt.insertMany(Array.from({ length: 16 }, (_, index) => ({
+      emailHash: keyedHash(`other-${index}@example.test`), ipHash, outcome: "FAILURE", createdAt: new Date(),
+    })));
+    await login(user!.email, strong).expect(429);
+  });
+  it("creates one sanitized login IP-rate-limit audit event per enforcement window", async () => {
+    const ipHash = keyedHash("::ffff:127.0.0.1");
+    await LoginAttempt.insertMany(Array.from({ length: 20 }, (_, index) => ({
+      emailHash: keyedHash(`limited-${index}@example.test`), ipHash, outcome: "FAILURE", createdAt: new Date(),
+    })));
+    await login("limited-target@example.test").expect(429);
+    await login("limited-target@example.test").expect(429);
+    const events = await AuditLog.find({ event: "LOGIN_IP_RATE_LIMIT" }).lean();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ ipHash, metadata: { windowMinutes: 15, threshold: 20 } });
+    expect(JSON.stringify(events[0])).not.toMatch(/password|cookie|token/i);
+  });
   it("requires a single-use CAPTCHA after repeated failures", async () => {
     await registerAndVerify();
     const ipHash = (await import("../src/security/crypto.js")).keyedHash("::ffff:127.0.0.1");
@@ -154,8 +217,16 @@ describe("login controls", () => {
     const challenge = await request(app).post("/api/v1/auth/captcha").send({}).expect(200);
     const numbers = (challenge.body.prompt as string).match(/\d+/g)!.map(Number);
     const answer = String(numbers[0]! + numbers[1]!);
-    await request(app).post("/api/v1/auth/login").set("Origin", "http://localhost:3100").send({ email: "student@example.test", password: strong, captchaId: challenge.body.challengeId, captchaAnswer: answer }).expect(200);
+    await request(app).post("/api/v1/auth/login").set("Origin", "http://localhost:3100").send({ email: "student@example.test", password: "Wrong-Password9!", captchaId: challenge.body.challengeId, captchaAnswer: answer }).expect(401);
     await request(app).post("/api/v1/auth/login").set("Origin", "http://localhost:3100").send({ email: "student@example.test", password: strong, captchaId: challenge.body.challengeId, captchaAnswer: answer }).expect(428);
+    const replacement = await request(app).post("/api/v1/auth/captcha").send({}).expect(200);
+    const replacementNumbers = (replacement.body.prompt as string).match(/\d+/g)!.map(Number);
+    await request(app).post("/api/v1/auth/login").set("Origin", "http://localhost:3100").send({
+      email: "student@example.test",
+      password: strong,
+      captchaId: replacement.body.challengeId,
+      captchaAnswer: String(replacementNumbers[0]! + replacementNumbers[1]!),
+    }).expect(200);
   });
 });
 
@@ -284,6 +355,56 @@ describe("password reset and MFA", () => {
     const next = await login();
     await MfaChallenge.updateOne({ challengeHash: sha256(next.body.challenge) }, { attempts: 5 });
     await completeMfa(next.body.challenge, "000000").expect(400);
+  });
+  it("limits MFA failures persistently across newly created challenges and deduplicates its audit", async () => {
+    await registerAndVerify();
+    const signedIn = await login();
+    const authCookie = cookie(signedIn);
+    const csrf = signedIn.body.csrfToken;
+    const started = await request(app).post("/api/v1/mfa/enrol/start")
+      .set("Cookie", authCookie).set("x-csrf-token", csrf).send({}).expect(200);
+    await request(app).post("/api/v1/mfa/enrol/confirm")
+      .set("Cookie", authCookie).set("x-csrf-token", csrf)
+      .send({ code: await generate({ secret: started.body.manualKey }) }).expect(200);
+
+    const first = await login().expect(200);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await completeMfa(first.body.challenge, "000000").expect(400);
+    }
+    const second = await login().expect(200);
+    await completeMfa(second.body.challenge, "000000").expect(429);
+    await completeMfa(second.body.challenge, "000000").expect(429);
+
+    expect(await LoginAttempt.countDocuments({ outcome: "MFA_FAILURE" })).toBe(5);
+    const events = await AuditLog.find({ event: "MFA_RATE_LIMIT" }).lean();
+    expect(events).toHaveLength(1);
+    expect(events[0]!.metadata).toMatchObject({ windowMinutes: 15, threshold: 5 });
+  });
+  it("password reset clears account failure state while preserving IP-wide protection", async () => {
+    const { user } = await registerAndVerify();
+    const ipHash = keyedHash("::ffff:127.0.0.1");
+    await User.updateOne({ _id: user!._id }, {
+      failedLoginCount: 5,
+      lockedUntil: new Date(Date.now() + 15 * 60_000),
+    });
+    await LoginAttempt.insertMany(Array.from({ length: 20 }, (_, index) => ({
+      emailHash: keyedHash(`ip-evidence-${index}@example.test`),
+      ipHash,
+      outcome: "FAILURE",
+      createdAt: new Date(),
+    })));
+
+    await request(app).post("/api/v1/auth/forgot-password").send({ email: user!.email }).expect(202);
+    const token = new URL(developmentOutbox().find((item) => item.type === "RESET_PASSWORD")!.link).searchParams.get("token")!;
+    const replacement = "Reset-Preserves7-IP!";
+    await request(app).post("/api/v1/auth/reset-password")
+      .send({ token, password: replacement, passwordConfirmation: replacement })
+      .expect(200);
+
+    const updated = await User.findById(user!._id).select("+failedLoginCount");
+    expect(updated!.failedLoginCount).toBe(0);
+    expect(updated!.lockedUntil).toBeUndefined();
+    await login(user!.email, replacement).expect(429);
   });
   it("requires the exact trusted Origin for MFA login", async () => {
     const missing = await request(app).post("/api/v1/mfa/login")

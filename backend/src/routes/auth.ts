@@ -15,6 +15,7 @@ import { clearSessionCookie, createSession, rotateSession } from "../security/se
 import { requireAuthentication, requireFreshAuthentication } from "../middleware/auth.js";
 import { Session } from "../models/Session.js";
 import { config } from "../config.js";
+import { AuditLog } from "../models/AuditLog.js";
 
 export const authRouter = Router();
 const genericVerificationMessage = "If the account is eligible, verification instructions will be sent.";
@@ -164,18 +165,30 @@ async function validateCaptcha(req: Parameters<typeof keyedHash>[0] extends neve
 }
 
 const invalidCredentials = () => new ApiError(401, "INVALID_CREDENTIALS", "Email or password is invalid");
+export const progressiveLoginDelayMs = (failures: number) => Math.min(1000, Math.max(0, failures) * 200);
 authRouter.post("/login", async (req, res) => {
   const input = strictBody(z.object({ email, password: z.string().min(1).max(128), captchaId: z.string().optional(), captchaAnswer: z.string().optional() }).strict(), req.body);
   const emailHash = keyedHash(input.email);
   const ipHash = keyedHash(req.ip ?? "");
   const since = new Date(Date.now() - 15 * 60000);
   const user = await User.findOne({ email: input.email }).select("+passwordHash +failedLoginCount +mfaSecretEncrypted +recoveryCodeHashes");
-  const accountSince = user?.passwordChangedAt && user.passwordChangedAt > since ? user.passwordChangedAt : since;
+  if (user?.lockedUntil && user.lockedUntil > new Date()) throw invalidCredentials();
+  const latestSuccess = await LoginAttempt.findOne({ emailHash, outcome: "SUCCESS", createdAt: { $gte: since } })
+    .sort({ createdAt: -1 })
+    .select("createdAt")
+    .lean();
+  const accountSince = [since, user?.passwordChangedAt, latestSuccess?.createdAt]
+    .filter((value): value is Date => value instanceof Date)
+    .reduce((latest, value) => value > latest ? value : latest, since);
   const [accountFailures, ipFailures] = await Promise.all([
-    LoginAttempt.countDocuments({ emailHash, outcome: "FAILURE", createdAt: { $gte: accountSince } }),
+    LoginAttempt.countDocuments({ emailHash, outcome: "FAILURE", createdAt: { $gt: accountSince } }),
     LoginAttempt.countDocuments({ ipHash, outcome: "FAILURE", createdAt: { $gte: since } }),
   ]);
-  if (ipFailures >= 20) throw new ApiError(429, "TOO_MANY_ATTEMPTS", "Too many attempts. Try again later.");
+  if (ipFailures >= 20) {
+    const recorded = await AuditLog.exists({ event: "LOGIN_IP_RATE_LIMIT", ipHash, createdAt: { $gte: since } });
+    if (!recorded) await audit(req, "LOGIN_IP_RATE_LIMIT", { metadata: { windowMinutes: 15, threshold: 20 } });
+    throw new ApiError(429, "TOO_MANY_ATTEMPTS", "Too many attempts. Try again later.");
+  }
   if (accountFailures >= 3 && !(await validateCaptcha(req, input.captchaId, input.captchaAnswer))) {
     await LoginAttempt.create({ emailHash, ipHash, outcome: "CAPTCHA_FAILURE" });
     await audit(req, "CAPTCHA_FAILURE");
@@ -194,10 +207,10 @@ authRouter.post("/login", async (req, res) => {
       await user.save();
     }
     await audit(req, "LOGIN_FAILURE", { subjectId: user?._id });
-    if (accountFailures >= 1) await new Promise((resolve) => setTimeout(resolve, Math.min(1000, accountFailures * 200)));
+    const delayMs = progressiveLoginDelayMs(accountFailures);
+    if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
     throw invalidCredentials();
   }
-  if (user.lockedUntil && user.lockedUntil > new Date()) throw invalidCredentials();
   if (!user.emailVerifiedAt) throw new ApiError(403, "EMAIL_VERIFICATION_REQUIRED", "Email verification is required");
   if (user.status !== "ACTIVE") throw new ApiError(403, "ACCOUNT_UNAVAILABLE", "This account is unavailable");
   user.failedLoginCount = 0;

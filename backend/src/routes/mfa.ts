@@ -2,11 +2,11 @@ import { Router } from "express";
 import { generateSecret, generateURI, verify } from "otplib";
 import QRCode from "qrcode";
 import { z } from "zod";
-import { MfaChallenge, SecurityAlert } from "../models/Security.js";
+import { LoginAttempt, MfaChallenge, SecurityAlert } from "../models/Security.js";
 import { User } from "../models/User.js";
 import { requireAuthentication, requireFreshAuthentication } from "../middleware/auth.js";
 import { strictBody } from "../security/validation.js";
-import { decrypt, encrypt, randomToken, sha256 } from "../security/crypto.js";
+import { decrypt, encrypt, keyedHash, randomToken, sha256 } from "../security/crypto.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../security/audit.js";
 import { createSession, rotateSession } from "../security/session.js";
@@ -21,6 +21,19 @@ mfaRouter.post("/login", async (req, res) => {
   if (!challenge || challenge.attempts >= 5) throw new ApiError(400, "INVALID_MFA_CHALLENGE", "MFA challenge is invalid or expired");
   const user = await User.findById(challenge.userId).select("+mfaSecretEncrypted +recoveryCodeHashes");
   if (!user?.mfaSecretEncrypted || !user.mfaEnabled) throw new ApiError(400, "INVALID_MFA_CHALLENGE", "MFA challenge is invalid or expired");
+  const since = new Date(Date.now() - 15 * 60_000);
+  const emailHash = keyedHash(user.email);
+  const ipHash = keyedHash(req.ip ?? "");
+  const attempts = await LoginAttempt.countDocuments({
+    $or: [{ emailHash }, { ipHash }],
+    outcome: "MFA_FAILURE",
+    createdAt: { $gte: since },
+  });
+  if (attempts >= 5) {
+    const recorded = await AuditLog.exists({ event: "MFA_RATE_LIMIT", ipHash, subjectId: user._id, createdAt: { $gte: since } });
+    if (!recorded) await audit(req, "MFA_RATE_LIMIT", { subjectId: user._id, metadata: { windowMinutes: 15, threshold: 5 } });
+    throw new ApiError(429, "TOO_MANY_ATTEMPTS", "Too many attempts. Try again later.");
+  }
   let valid = false;
   if (input.recovery) {
     const hash = sha256(input.code.trim().toUpperCase());
@@ -45,6 +58,7 @@ mfaRouter.post("/login", async (req, res) => {
     valid = (await verify({ secret, token: input.code })).valid;
   }
   if (!valid) {
+    await LoginAttempt.create({ emailHash, ipHash, outcome: "MFA_FAILURE" });
     challenge.attempts += 1;
     if (challenge.attempts >= 5) challenge.usedAt = new Date();
     await challenge.save();
