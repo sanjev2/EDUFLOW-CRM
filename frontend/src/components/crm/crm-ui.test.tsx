@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "../app-shell";
-import { StudentProfileForm } from "./student-profile-form";
+import { buildStudentProfileUpdate, StudentProfileForm } from "./student-profile-form";
 import { StudentApplication } from "./student-application";
 import { SecurityCenter } from "../auth/security-center";
 import { AdminAssignments } from "./admin-assignments";
@@ -129,6 +129,96 @@ describe("EduFlow CRM interface", () => {
     expect(screen.getByRole("heading", { name: "Personal information" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Academic information" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Study preferences" })).toBeInTheDocument();
+  });
+  it("builds a strict profile payload, omits blank optional fields and preserves zero and false", () => {
+    const payload = buildStudentProfileUpdate({
+      _id: "profile-id",
+      userId: "user-id",
+      createdAt: "2026-01-01",
+      updatedAt: "2026-01-02",
+      phone: "   ",
+      country: "Nepal",
+      englishTestType: "NONE",
+      resultValue: "0",
+      englishTestScore: 0,
+      previousVisaRefusal: false,
+      ...({ role: "ADMIN", status: "ACTIVE", permissions: ["admin"], isAdmin: true, emailVerified: true } as object),
+    });
+    expect(payload).toMatchObject({
+      country: "Nepal",
+      englishTestType: "NONE",
+      resultValue: 0,
+      englishTestScore: 0,
+      previousVisaRefusal: false,
+    });
+    expect(payload.phone).toBeUndefined();
+    expect(JSON.stringify(payload)).not.toMatch(/_id|userId|createdAt|updatedAt|role|status|permissions|isAdmin|emailVerified/);
+  });
+  it("saves only allowlisted profile fields and retains the returned values", async () => {
+    let storedProfile: Record<string, unknown> = {
+      _id: "profile-id", userId: "user-id", createdAt: "2026-01-01", updatedAt: "2026-01-02",
+      role: "ADMIN", isAdmin: true, phone: "", country: "Nepal", englishTestType: "NONE",
+      resultValue: 4, previousVisaRefusal: true,
+    };
+    const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) return response({ user: { role: "STUDENT", status: "ACTIVE", mfaEnabled: false }, passwordExpired: false, mfaComplete: true });
+      if (url.includes("/auth/csrf")) return response({ csrfToken: "test-csrf" });
+      if (url.endsWith("/crm/profile") && options?.method === "PUT") {
+        const payload = JSON.parse(String(options.body));
+        expect(payload).toMatchObject({ country: "Nepal", englishTestType: "NONE", resultValue: 0, previousVisaRefusal: false });
+        expect(payload.phone).toBeUndefined();
+        expect(payload).not.toHaveProperty("_id");
+        expect(payload).not.toHaveProperty("userId");
+        expect(payload).not.toHaveProperty("createdAt");
+        expect(payload).not.toHaveProperty("updatedAt");
+        for (const key of ["role", "status", "permissions", "isAdmin", "emailVerified"]) expect(payload).not.toHaveProperty(key);
+        storedProfile = { ...payload, _id: "profile-id", userId: "user-id" };
+        return response({ profile: storedProfile, completion: 43 });
+      }
+      return response({ profile: storedProfile, completion: storedProfile.resultValue === 0 ? 43 : 20 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const view = render(<StudentProfileForm />);
+    fireEvent.change(await screen.findByLabelText("Result value"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("Previous visa refusal"), { target: { value: "false" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save profile" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Profile saved successfully");
+    expect(screen.getByLabelText("Result value")).toHaveValue(0);
+    expect(screen.getByLabelText("Previous visa refusal")).toHaveValue("false");
+    expect(screen.getByText("43%")).toBeInTheDocument();
+    view.unmount();
+    render(<StudentProfileForm />);
+    expect(await screen.findByLabelText("Result value")).toHaveValue(0);
+    expect(screen.getByLabelText("Previous visa refusal")).toHaveValue("false");
+  });
+  it("shows recognized backend profile field validation safely with a generic fallback", async () => {
+    const fetchMock = vi.fn((input: string | URL | Request, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) return response({ user: { role: "STUDENT", status: "ACTIVE", mfaEnabled: false }, passwordExpired: false, mfaComplete: true });
+      if (url.includes("/auth/csrf")) return response({ csrfToken: "test-csrf" });
+      if (url.endsWith("/crm/profile") && options?.method === "PUT") {
+        return Promise.resolve({
+          ok: false,
+          status: 400,
+          json: () => Promise.resolve({
+            error: {
+              code: "VALIDATION_ERROR",
+              message: "Request validation failed",
+              details: { fieldErrors: { completionYear: ["Must be 1950 or later"] } },
+            },
+          }),
+        } as Response);
+      }
+      return response({ profile: { country: "Nepal", englishTestType: "NONE" }, completion: 0 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<StudentProfileForm />);
+    fireEvent.change(await screen.findByLabelText("City"), { target: { value: "Kathmandu" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save profile" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Completion year: Must be 1950 or later");
+    expect(alert).not.toHaveTextContent("Unrecognized key");
   });
   it("shows the important empty enquiry state", async () => {
     vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) => String(input).includes("/auth/me")
